@@ -21,10 +21,20 @@ import { createModel, updateModel, type RewardModel } from "@/lib/reward-model";
 import { selectPair } from "@/lib/query-selector";
 import { createConvergenceState, checkConvergence, type ConvergenceState } from "@/lib/convergence";
 import type { Property, Building, StreetLight } from "@/types";
+import {
+  formatCompareError,
+  logCompare,
+  logCompareError,
+  withTimeout,
+} from "@/lib/compare-log";
 
 const MIN_ROUNDS = 5;
 const MAX_ROUNDS = 25;
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
+
+/** 도보/ODsay + 가로등 한 번에 허용하는 최대 대기 시간(ms) */
+const ENRICH_TRANSIT_TIMEOUT_MS = 60_000;
+const ENRICH_LIGHTS_TIMEOUT_MS = 45_000;
 
 interface PairState {
   a: Property;
@@ -57,6 +67,12 @@ function CompareContent() {
   const [sessionId] = useState(() => crypto.randomUUID());
   const [loading, setLoading] = useState(true);
   const [convergePrompt, setConvergePrompt] = useState<string | null>(null);
+  /** 초기화 단계 치명적 오류(통계 실패 등) */
+  const [initError, setInitError] = useState<string | null>(null);
+  /** 건물 미조회 등으로 비교 불가 */
+  const [initWarning, setInitWarning] = useState<string | null>(null);
+  /** 페어 로딩 중 enrichPair 오류(경로·가로등) */
+  const [pairLoadError, setPairLoadError] = useState<string | null>(null);
 
   const modelRef = useRef<RewardModel | null>(null);
   const statsRef = useRef<FeatureStats | null>(null);
@@ -67,49 +83,75 @@ function CompareContent() {
 
   useEffect(() => {
     async function init() {
-      const { data: bld } = await supabase
-        .from("buildings")
-        .select("*")
-        .eq("id", buildingId)
-        .single();
-      if (bld) setBuilding(bld as Building);
-
-      let query = supabase
-        .from("properties")
-        .select("*")
-        .gte("monthly_rent", minRent)
-        .lte("monthly_rent", maxRent);
-
-      if (minDeposit > 0) query = query.gte("deposit", minDeposit);
-      if (maxDeposit < 50000) query = query.lte("deposit", maxDeposit);
-
-      const { data: props } = await query;
-
-      if (props && props.length >= 2 && bld) {
-        const typed = props as Property[];
-        setProperties(typed);
-
-        const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
-        statsRef.current = stats;
-        commuteByIdRef.current = commuteById;
-
-        let userWeights: Record<string, number> | undefined;
-        if (weightsParam) {
-          try { userWeights = JSON.parse(weightsParam); } catch { /* ignore */ }
+      setInitError(null);
+      setInitWarning(null);
+      try {
+        const { data: bld, error: bErr } = await supabase
+          .from("buildings")
+          .select("*")
+          .eq("id", buildingId)
+          .single();
+        if (bErr) {
+          logCompareError("buildings", bErr);
+          setInitWarning((w) => (w ? `${w} · 건물: ${bErr.message}` : `건물 조회: ${bErr.message}`));
         }
-        const model = createModel(undefined, userWeights);
-        modelRef.current = model;
-      } else if (props && props.length >= 2) {
-        setProperties(props as Property[]);
-      }
+        if (bld) setBuilding(bld as Building);
 
-      setLoading(false);
+        let query = supabase
+          .from("properties")
+          .select("*")
+          .gte("monthly_rent", minRent)
+          .lte("monthly_rent", maxRent);
+
+        if (minDeposit > 0) query = query.gte("deposit", minDeposit);
+        if (maxDeposit < 50000) query = query.lte("deposit", maxDeposit);
+
+        const { data: props, error: pErr } = await query;
+        if (pErr) {
+          logCompareError("properties", pErr);
+          setInitError(`매물 조회 실패: ${pErr.message}`);
+          return;
+        }
+
+        if (props && props.length >= 2 && bld) {
+          const typed = props as Property[];
+          setProperties(typed);
+
+          try {
+            const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
+            statsRef.current = stats;
+            commuteByIdRef.current = commuteById;
+
+            let userWeights: Record<string, number> | undefined;
+            if (weightsParam) {
+              try { userWeights = JSON.parse(weightsParam); } catch { /* ignore */ }
+            }
+            const model = createModel(undefined, userWeights);
+            modelRef.current = model;
+            logCompare("init 완료", `매물 ${typed.length}개, 통계·모델 준비됨`);
+          } catch (e) {
+            logCompareError("computeStatsWithCommute", e);
+            setInitError(`통학 통계 계산 실패: ${formatCompareError(e)}`);
+          }
+        } else if (props && props.length >= 2) {
+          setProperties(props as Property[]);
+          setInitWarning(
+            "건물(building) 정보가 없어 비교를 시작할 수 없습니다. 이전 단계에서 건물을 선택했는지, URL의 building 파라미터가 유효한지 확인하세요.",
+          );
+        }
+      } catch (e) {
+        logCompareError("init", e);
+        setInitError(`초기화 실패: ${formatCompareError(e)}`);
+      } finally {
+        setLoading(false);
+      }
     }
     init();
   }, [buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
 
   const enrichPair = useCallback(
     async (a: Property, b: Property, bld: Building) => {
+      setPairLoadError(null);
       let transitA: TransitResult | undefined;
       let transitB: TransitResult | undefined;
       let lightsA: StreetLight[] = [];
@@ -117,57 +159,86 @@ function CompareContent() {
       let densityA: number | undefined;
       let densityB: number | undefined;
 
-      try {
-        [transitA, transitB] = await Promise.all([
-          calcTransitForDisplay(a, bld),
-          calcTransitForDisplay(b, bld),
-        ]);
-      } catch {
-        /* gate DB 미구축 시 이동시간 없이 진행 */
-      }
+      logCompare("enrichPair 시작", `${a.id} vs ${b.id}`);
 
       try {
-        const allLights = await loadStreetLights();
-        if (allLights.length > 0) {
-          const routeA = [
-            ...(transitA?.propertyToGateRoute ?? []),
-            ...(transitA?.gateToBuildingRoute ?? []),
-          ];
-          const routeB = [
-            ...(transitB?.propertyToGateRoute ?? []),
-            ...(transitB?.gateToBuildingRoute ?? []),
-          ];
-
-          if (routeA.length >= 2) {
-            lightsA = filterLightsAlongRoute(allLights, routeA, 30);
-          }
-          if (routeB.length >= 2) {
-            lightsB = filterLightsAlongRoute(allLights, routeB, 30);
-          }
-
-          if (transitA) densityA = calcStreetLightDensity(lightsA.length, transitA.walkDistanceM);
-          if (transitB) densityB = calcStreetLightDensity(lightsB.length, transitB.walkDistanceM);
+        try {
+          [transitA, transitB] = await withTimeout(
+            Promise.all([calcTransitForDisplay(a, bld), calcTransitForDisplay(b, bld)]),
+            ENRICH_TRANSIT_TIMEOUT_MS,
+            "도보/버스 경로(calcTransitForDisplay)",
+          );
+        } catch (e) {
+          logCompareError("calcTransitForDisplay", e);
+          setPairLoadError(`경로: ${formatCompareError(e)}`);
         }
-      } catch {
-        /* 가로등 데이터 없으면 무시 */
-      }
 
-      setPair({ a, b, transitA, transitB, lightsA, lightsB, densityA, densityB });
+        try {
+          const allLights = await withTimeout(
+            loadStreetLights(),
+            ENRICH_LIGHTS_TIMEOUT_MS,
+            "가로등 목록(loadStreetLights)",
+          );
+          if (allLights.length > 0) {
+            const routeA = [
+              ...(transitA?.propertyToGateRoute ?? []),
+              ...(transitA?.gateToBuildingRoute ?? []),
+            ];
+            const routeB = [
+              ...(transitB?.propertyToGateRoute ?? []),
+              ...(transitB?.gateToBuildingRoute ?? []),
+            ];
+
+            try {
+              if (routeA.length >= 2) {
+                lightsA = filterLightsAlongRoute(allLights, routeA, 30);
+              }
+              if (routeB.length >= 2) {
+                lightsB = filterLightsAlongRoute(allLights, routeB, 30);
+              }
+            } catch (e) {
+              logCompareError("filterLightsAlongRoute", e);
+              setPairLoadError((prev) =>
+                prev ? `${prev} · 가로등 필터: ${formatCompareError(e)}` : `가로등 필터: ${formatCompareError(e)}`,
+              );
+            }
+
+            if (transitA) densityA = calcStreetLightDensity(lightsA.length, transitA.walkDistanceM);
+            if (transitB) densityB = calcStreetLightDensity(lightsB.length, transitB.walkDistanceM);
+          }
+        } catch (e) {
+          logCompareError("loadStreetLights", e);
+          setPairLoadError((prev) =>
+            prev ? `${prev} · 가로등: ${formatCompareError(e)}` : `가로등: ${formatCompareError(e)}`,
+          );
+        }
+      } catch (e) {
+        logCompareError("enrichPair", e);
+        setPairLoadError(`페어 준비: ${formatCompareError(e)}`);
+      } finally {
+        setPair({ a, b, transitA, transitB, lightsA, lightsB, densityA, densityB });
+        logCompare("enrichPair setPair 완료", `${a.id} vs ${b.id}`);
+      }
     },
     [],
   );
 
   useEffect(() => {
     if (!building || properties.length < 2 || !modelRef.current || !statsRef.current) return;
-    const initial = selectPair(
-      modelRef.current,
-      properties,
-      statsRef.current,
-      usedPairsRef.current,
-      commuteByIdRef.current ?? undefined,
-    );
-    usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
-    enrichPair(initial.a, initial.b, building);
+    try {
+      const initial = selectPair(
+        modelRef.current,
+        properties,
+        statsRef.current,
+        usedPairsRef.current,
+        commuteByIdRef.current ?? undefined,
+      );
+      usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
+      void enrichPair(initial.a, initial.b, building);
+    } catch (e) {
+      logCompareError("selectPair(초기 페어)", e);
+      setPairLoadError(`페어 선택 실패: ${formatCompareError(e)}`);
+    }
   }, [building, properties, enrichPair]);
 
   const handleSelect = useCallback(async (property: Property) => {
@@ -229,15 +300,20 @@ function CompareContent() {
 
     setTimeout(() => {
       if (!modelRef.current || !statsRef.current || !building) return;
-      const next = selectPair(
-        modelRef.current,
-        properties,
-        statsRef.current,
-        usedPairsRef.current,
-        commuteByIdRef.current ?? undefined,
-      );
-      usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
-      enrichPair(next.a, next.b, building);
+      try {
+        const next = selectPair(
+          modelRef.current,
+          properties,
+          statsRef.current,
+          usedPairsRef.current,
+          commuteByIdRef.current ?? undefined,
+        );
+        usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
+        void enrichPair(next.a, next.b, building);
+      } catch (e) {
+        logCompareError("selectPair(다음 라운드)", e);
+        setPairLoadError(`다음 페어 선택: ${formatCompareError(e)}`);
+      }
     }, 300);
   }, [pair, building, round, sessionId, buildingId, properties, enrichPair, router]);
 
@@ -245,15 +321,20 @@ function CompareContent() {
     setConvergePrompt(null);
     if (!building || !modelRef.current || !statsRef.current) return;
     setTimeout(() => {
-      const next = selectPair(
-        modelRef.current!,
-        properties,
-        statsRef.current!,
-        usedPairsRef.current,
-        commuteByIdRef.current ?? undefined,
-      );
-      usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
-      enrichPair(next.a, next.b, building!);
+      try {
+        const next = selectPair(
+          modelRef.current!,
+          properties,
+          statsRef.current!,
+          usedPairsRef.current,
+          commuteByIdRef.current ?? undefined,
+        );
+        usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
+        void enrichPair(next.a, next.b, building!);
+      } catch (e) {
+        logCompareError("selectPair(수렴 후 계속)", e);
+        setPairLoadError(`페어 선택: ${formatCompareError(e)}`);
+      }
     }, 300);
   }, [building, properties, enrichPair]);
 
@@ -320,6 +401,38 @@ function CompareContent() {
     );
   }
 
+  if (initError) {
+    return (
+      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
+        <p className="text-center font-semibold text-red-600">초기화 오류</p>
+        <p className="max-w-md text-center text-sm text-gray-600">{initError}</p>
+        <p className="max-w-md text-center text-xs text-gray-400">
+          개발자 도구 콘솔에서 <code className="rounded bg-gray-100 px-1">[compare]</code> 로 필터해 로그를 확인하세요.
+        </p>
+        <Button variant="outline" onClick={() => router.back()}>
+          돌아가기
+        </Button>
+      </main>
+    );
+  }
+
+  if (properties.length >= 2 && !building) {
+    return (
+      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
+        <p className="text-center font-semibold text-amber-800">건물 정보 없음</p>
+        <p className="max-w-md text-center text-sm text-gray-600">
+          {initWarning ?? "URL의 building 파라미터가 없거나 잘못되었습니다."}
+        </p>
+        <p className="max-w-md text-center text-xs text-gray-400">
+          콘솔에서 <code className="rounded bg-gray-100 px-1">[compare]</code> 로 건물 조회 오류를 확인하세요.
+        </p>
+        <Button variant="outline" onClick={() => router.back()}>
+          돌아가기
+        </Button>
+      </main>
+    );
+  }
+
   if (properties.length < 2) {
     return (
       <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
@@ -341,6 +454,16 @@ function CompareContent() {
           maxRounds={MAX_ROUNDS}
         />
       </div>
+
+      {pairLoadError && (
+        <div className="absolute inset-x-0 top-14 z-20 mx-4 max-h-32 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 shadow-sm">
+          <p className="font-semibold">페어 로딩 참고</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-amber-900">{pairLoadError}</p>
+          <p className="mt-1 text-[10px] text-amber-700/90">
+            콘솔 필터: <code className="rounded bg-amber-100/80 px-0.5">compare</code>
+          </p>
+        </div>
+      )}
 
       <KakaoMap
         center={building ? { lat: building.lat, lng: building.lng } : BUSAN_UNIV}
