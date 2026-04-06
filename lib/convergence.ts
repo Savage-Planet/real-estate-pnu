@@ -1,7 +1,7 @@
 import type { Property } from "@/types";
 import type { RewardModel } from "./reward-model";
 import { posteriorConcentration, scoreProperty } from "./reward-model";
-import { type FeatureStats, toFeatureVector } from "./feature-engineer";
+import { type CommuteFeatures, type FeatureStats, toFeatureVector } from "./feature-engineer";
 import { getMaxExpectedVolumeRemoval } from "./query-selector";
 
 const TOP_K = 5;
@@ -30,7 +30,7 @@ function getTopK(
   candidates: Property[],
   stats: FeatureStats,
   k: number,
-  commuteById?: Map<string, number>,
+  commuteById?: Map<string, CommuteFeatures>,
 ): string[] {
   const scored = candidates.map((p) => ({
     id: p.id,
@@ -64,7 +64,7 @@ export function checkConvergence(
   round: number,
   minRounds: number,
   maxRounds: number,
-  commuteById?: Map<string, number>,
+  commuteById?: Map<string, CommuteFeatures>,
 ): ConvergenceState {
   const topK = getTopK(model, candidates, stats, TOP_K, commuteById);
   const history = [...state.topKHistory, topK];

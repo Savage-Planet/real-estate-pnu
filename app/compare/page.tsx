@@ -8,9 +8,14 @@ import PropertySheet from "@/components/PropertySheet";
 import ProgressBar from "@/components/ProgressBar";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
-import { calcTransitTime, totalTransitMinutes, type TransitResult } from "@/lib/transit-calculator";
+import { calcTransitForDisplay, type TransitResult } from "@/lib/transit-calculator";
 import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
-import { computeStatsWithCommute, toFeatureVector, type FeatureStats } from "@/lib/feature-engineer";
+import {
+  computeStatsWithCommute,
+  toFeatureVector,
+  type CommuteFeatures,
+  type FeatureStats,
+} from "@/lib/feature-engineer";
 import { createModel, updateModel, type RewardModel } from "@/lib/reward-model";
 import { selectPair } from "@/lib/query-selector";
 import { createConvergenceState, checkConvergence, type ConvergenceState } from "@/lib/convergence";
@@ -54,7 +59,7 @@ function CompareContent() {
 
   const modelRef = useRef<RewardModel | null>(null);
   const statsRef = useRef<FeatureStats | null>(null);
-  const commuteByIdRef = useRef<Map<string, number> | null>(null);
+  const commuteByIdRef = useRef<Map<string, CommuteFeatures> | null>(null);
   const convRef = useRef<ConvergenceState>(createConvergenceState());
   const usedPairsRef = useRef<Set<string>>(new Set());
   const peakScoreRef = useRef(0);
@@ -113,8 +118,8 @@ function CompareContent() {
 
       try {
         [transitA, transitB] = await Promise.all([
-          calcTransitTime(a, bld),
-          calcTransitTime(b, bld),
+          calcTransitForDisplay(a, bld),
+          calcTransitForDisplay(b, bld),
         ]);
       } catch {
         /* gate DB 미구축 시 이동시간 없이 진행 */
@@ -183,12 +188,9 @@ function CompareContent() {
 
     const winner = preferred === "a" ? currentPair.a : currentPair.b;
     const loser = preferred === "a" ? currentPair.b : currentPair.a;
-    const wTransit = preferred === "a" ? currentPair.transitA : currentPair.transitB;
-    const lTransit = preferred === "a" ? currentPair.transitB : currentPair.transitA;
-    const wCommute =
-      totalTransitMinutes(wTransit) ?? commuteByIdRef.current?.get(winner.id) ?? null;
-    const lCommute =
-      totalTransitMinutes(lTransit) ?? commuteByIdRef.current?.get(loser.id) ?? null;
+    /* 학습 φ는 초기 `computeStatsWithCommute`(도보 임계·버스 API 규칙)와 동일 — 표시용 transit과 혼용하지 않음 */
+    const wCommute = commuteByIdRef.current?.get(winner.id) ?? { walkMin: 0, busAvailable: null };
+    const lCommute = commuteByIdRef.current?.get(loser.id) ?? { walkMin: 0, busAvailable: null };
     const winnerFeat = toFeatureVector(winner, statsRef.current, wCommute);
     const loserFeat = toFeatureVector(loser, statsRef.current, lCommute);
     modelRef.current = updateModel(modelRef.current, winnerFeat, loserFeat);

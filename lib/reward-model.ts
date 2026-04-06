@@ -21,7 +21,8 @@ const PRIOR_MEAN: FeatureVector = [
    0.2,  // 년식 (yearScore 높을수록 최신 → 양의 선호)
    0.1,  // 기타옵션
   -0.2,  // 소음 (낮을수록 좋음)
-   0.15, // 통학 (짧을수록 φ↑ → 양의 선호)
+   0.15, // 통학 도보 (짧을수록 φ↑)
+   0.06, // 버스 경로 가능 (가능할수록 φ↑)
 ];
 
 const NUM_SAMPLES = 200;
@@ -153,7 +154,8 @@ export function userWeightsToPrior(userWeights?: Record<string, number>): Featur
      scale("year", 1),            // 년식
      scale("options", 1),         // 기타옵션
     -scale("noise", 1),           // 소음 (낮을수록 좋음 → 음수)
-     scale("commute", 1),         // 통학 (짧을수록 좋음 → φ 높을수록 선호)
+     scale("commute", 1),         // 통학 도보 (짧을수록 좋음)
+     scale("busAvailable", 1),    // 버스로 갈 수 있으면 좋다 (이진 φ)
   ];
 }
 

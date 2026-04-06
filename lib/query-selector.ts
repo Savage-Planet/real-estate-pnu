@@ -1,6 +1,11 @@
 import type { Property } from "@/types";
 import type { RewardModel } from "./reward-model";
-import { type FeatureVector, type FeatureStats, toFeatureVector } from "./feature-engineer";
+import {
+  type CommuteFeatures,
+  type FeatureVector,
+  type FeatureStats,
+  toFeatureVector,
+} from "./feature-engineer";
 import { haversine } from "./geo";
 
 const MIN_DISTANCE_M = 50;
@@ -49,7 +54,7 @@ export function selectPair(
   candidates: Property[],
   stats: FeatureStats,
   usedPairs?: Set<string>,
-  commuteById?: Map<string, number>,
+  commuteById?: Map<string, CommuteFeatures>,
 ): PropertyPair {
   const featureCache = new Map<string, FeatureVector>();
   const getFeatures = (p: Property): FeatureVector => {
@@ -104,7 +109,7 @@ export function getMaxExpectedVolumeRemoval(
   model: RewardModel,
   candidates: Property[],
   stats: FeatureStats,
-  commuteById?: Map<string, number>,
+  commuteById?: Map<string, CommuteFeatures>,
 ): number {
   const pair = selectPair(model, candidates, stats, undefined, commuteById);
   return pair.expectedVolumeRemoval;

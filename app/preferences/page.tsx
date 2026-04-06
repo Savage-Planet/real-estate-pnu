@@ -6,12 +6,16 @@ import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { DB_WALK_MIN_FOR_BUS_API } from "@/lib/transit-calculator";
 
 interface WeightItem {
   key: string;
   label: string;
   description: string;
   defaultValue: number;
+  /** 슬라이더 양 끝 문구 (기본: 관심없음 / 매우 중요) */
+  footerLeft?: string;
+  footerRight?: string;
 }
 
 const WEIGHT_ITEMS: WeightItem[] = [
@@ -27,6 +31,14 @@ const WEIGHT_ITEMS: WeightItem[] = [
   { key: "year", label: "년식(신축)", description: "최신일수록 좋다", defaultValue: 50 },
   { key: "options", label: "기타옵션", description: "많을수록 좋다", defaultValue: 30 },
   { key: "commute", label: "통학·도보", description: "캠퍼스까지 짧을수록 좋다", defaultValue: 55 },
+  {
+    key: "busAvailable",
+    label: "버스",
+    description: `학습에 반영할 중요도 (가능 여부는 DB+도보 ${DB_WALK_MIN_FOR_BUS_API}분 기준으로 판별)`,
+    defaultValue: 45,
+    footerLeft: "안중요",
+    footerRight: "중요",
+  },
   { key: "noise", label: "소음", description: "낮을수록 좋다", defaultValue: 50 },
 ];
 
@@ -94,8 +106,8 @@ function PreferencesContent() {
                 onValueChange={(v) => handleChange(item.key, v[0])}
               />
               <div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground">
-                <span>관심없음</span>
-                <span>매우 중요</span>
+                <span>{item.footerLeft ?? "관심없음"}</span>
+                <span>{item.footerRight ?? "매우 중요"}</span>
               </div>
             </div>
           ))}

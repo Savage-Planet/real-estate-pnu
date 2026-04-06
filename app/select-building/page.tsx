@@ -110,7 +110,7 @@ export default function SelectBuildingPage() {
           <div className="mx-auto max-w-md flex flex-col gap-4">
             <div>
               <p className="text-sm font-medium text-muted-foreground">
-                1 / 3 단계
+                1 / 4 단계
               </p>
               <h1 className="mt-0.5 text-lg font-bold tracking-tight">
                 자주 가는 건물을 검색하세요
