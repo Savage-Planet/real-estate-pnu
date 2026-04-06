@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence, type PanInfo } from "framer-motion";
-import { X, Home, MapPin, Clock, Lightbulb, Shield, ChevronDown, Volume2 } from "lucide-react";
+import { X, Home, MapPin, Clock, Bus, Lightbulb, Shield, ChevronDown, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Property } from "@/types";
 
@@ -11,6 +11,9 @@ interface PropertySheetProps {
   onClose: () => void;
   onSelect: (property: Property) => void;
   walkTimeMin?: number;
+  walkDistanceM?: number;
+  busTimeMin?: number;
+  streetLightCount?: number;
   streetLightDensity?: number;
   label?: string;
 }
@@ -50,6 +53,9 @@ export default function PropertySheet({
   onClose,
   onSelect,
   walkTimeMin,
+  walkDistanceM,
+  busTimeMin,
+  streetLightCount,
   streetLightDensity,
   label,
 }: PropertySheetProps) {
@@ -116,7 +122,7 @@ export default function PropertySheet({
               </div>
 
               <div className="mb-4 grid grid-cols-3 gap-3">
-                <InfoCell icon={<Home className="size-4" />} label="면적" value={`${property.exclusive_area}m²`} />
+                <InfoCell icon={<Home className="size-4" />} label="면적" value={`${(property.exclusive_area / 3.3058).toFixed(1)}평`} />
                 <InfoCell icon={<Home className="size-4" />} label="방" value={`${property.rooms}개`} />
                 <InfoCell icon={<ChevronDown className="size-4" />} label="방향" value={formatDirection(property.direction)} />
               </div>
@@ -127,20 +133,32 @@ export default function PropertySheet({
                 <InfoCell icon={<Home className="size-4" />} label="유형" value={property.property_type} />
               </div>
 
-              {(walkTimeMin !== undefined || streetLightDensity !== undefined || property.noise_level != null) && (
+              {(walkTimeMin !== undefined || streetLightCount !== undefined || property.noise_level != null) && (
                 <div className="mb-4 rounded-xl bg-gray-50 p-3">
                   <p className="mb-2 text-xs font-semibold text-gray-500">이동 / 환경 정보</p>
-                  <div className="flex flex-wrap gap-4 text-sm">
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
                     {walkTimeMin !== undefined && walkTimeMin > 0 && (
                       <span className="flex items-center gap-1.5">
                         <Clock className="size-4 text-green-600" />
                         도보 {walkTimeMin}분
+                        {walkDistanceM != null && walkDistanceM > 0 && (
+                          <span className="text-xs text-gray-400">({(walkDistanceM / 1000).toFixed(1)}km)</span>
+                        )}
                       </span>
                     )}
-                    {streetLightDensity !== undefined && (
+                    {busTimeMin != null && busTimeMin > 0 && (
+                      <span className="flex items-center gap-1.5">
+                        <Bus className="size-4 text-emerald-600" />
+                        버스 {busTimeMin}분
+                      </span>
+                    )}
+                    {streetLightCount != null && streetLightCount > 0 && (
                       <span className="flex items-center gap-1.5">
                         <Lightbulb className="size-4 text-yellow-500" />
-                        가로등 {streetLightDensity.toFixed(1)}개/100m
+                        가로등 {streetLightCount}개
+                        {streetLightDensity != null && (
+                          <span className="text-xs text-gray-400">({streetLightDensity.toFixed(1)}개/100m)</span>
+                        )}
                       </span>
                     )}
                     {property.noise_level != null && (

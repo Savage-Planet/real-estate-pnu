@@ -112,8 +112,32 @@ function mcmcSample(
   return samples;
 }
 
-export function createModel(dim: number = FEATURE_DIM): RewardModel {
-  const prior = PRIOR_MEAN.slice(0, dim);
+export function userWeightsToPrior(userWeights?: Record<string, number>): FeatureVector {
+  if (!userWeights) return [...PRIOR_MEAN];
+
+  const scale = (key: string, sign: number) => {
+    const v = (userWeights[key] ?? 50) / 100;
+    return sign * v * 0.5;
+  };
+
+  return [
+    -scale("monthlyRent", 1),     // 월세 (낮을수록 좋음 → 음수)
+    -scale("deposit", 1),         // 보증금
+    -scale("maintenanceFee", 1),  // 관리비
+     scale("area", 1),            // 크기
+     scale("rooms", 1),           // 방 개수
+     0, 0, 0, 0, 0, 0, 0, 0,     // 방향 8방위
+     scale("parking", 1),         // 주차
+     scale("cctv", 1),            // CCTV
+     scale("elevator", 1),        // 엘리베이터
+     scale("year", 1),            // 년식
+     scale("options", 1),         // 기타옵션
+    -scale("noise", 1),           // 소음 (낮을수록 좋음 → 음수)
+  ];
+}
+
+export function createModel(dim: number = FEATURE_DIM, userWeights?: Record<string, number>): RewardModel {
+  const prior = userWeights ? userWeightsToPrior(userWeights) : PRIOR_MEAN.slice(0, dim);
   while (prior.length < dim) prior.push(0);
 
   const initial = normalizeToUnitBall(prior);

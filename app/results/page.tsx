@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, RotateCcw, X, ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
 import { supabase } from "@/lib/supabase";
 import { computeStats, toFeatureVector, getMeanWeightLabels } from "@/lib/feature-engineer";
@@ -13,6 +14,7 @@ import { calcWalkRoute } from "@/lib/gate-distance";
 import type { Property, Comparison, Building } from "@/types";
 
 const PAGE_SIZE = 10;
+const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
 
 interface ScoredProperty {
   property: Property;
@@ -25,6 +27,10 @@ function ResultsContent() {
   const params = useSearchParams();
   const sessionId = params.get("session") ?? "";
   const buildingId = params.get("building") ?? "";
+  const minRent = Number(params.get("minRent") ?? 0);
+  const maxRent = Number(params.get("maxRent") ?? 999);
+  const minDeposit = Number(params.get("minDeposit") ?? 0);
+  const maxDeposit = Number(params.get("maxDeposit") ?? 99999);
 
   const [ranked, setRanked] = useState<ScoredProperty[]>([]);
   const [building, setBuilding] = useState<Building | null>(null);
@@ -38,6 +44,12 @@ function ResultsContent() {
 
   useEffect(() => {
     async function init() {
+      let propsQuery = supabase.from("properties").select("*")
+        .gte("monthly_rent", minRent)
+        .lte("monthly_rent", maxRent);
+      if (minDeposit > 0) propsQuery = propsQuery.gte("deposit", minDeposit);
+      if (maxDeposit < 99999) propsQuery = propsQuery.lte("deposit", maxDeposit);
+
       const [{ data: bld }, { data: comparisons }, { data: props }] = await Promise.all([
         supabase.from("buildings").select("*").eq("id", buildingId).single(),
         supabase
@@ -45,7 +57,7 @@ function ResultsContent() {
           .select("*")
           .eq("session_id", sessionId)
           .order("round", { ascending: true }),
-        supabase.from("properties").select("*"),
+        propsQuery,
       ]);
 
       if (bld) setBuilding(bld as Building);
@@ -89,13 +101,12 @@ function ResultsContent() {
         score: (s.score - minScore) / range,
       }));
 
-      const top30 = normalized.slice(0, 30);
       const walkResults = await Promise.all(
-        top30.map((s) => calcWalkRoute(s.property, buildingId).catch(() => null)),
+        normalized.map((s) => calcWalkRoute(s.property, buildingId).catch(() => null)),
       );
-      for (let i = 0; i < top30.length; i++) {
+      for (let i = 0; i < normalized.length; i++) {
         if (walkResults[i]) {
-          top30[i].walkMin = walkResults[i]!.totalWalkMin;
+          normalized[i].walkMin = walkResults[i]!.totalWalkMin;
         }
       }
 
@@ -108,7 +119,7 @@ function ResultsContent() {
       setLoading(false);
     }
     init();
-  }, [sessionId, buildingId]);
+  }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit]);
 
   async function handleCardClick(propertyId: string) {
     setDetailPropertyId(propertyId);
@@ -136,6 +147,23 @@ function ResultsContent() {
   const pageItems = ranked.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.ceil(ranked.length / PAGE_SIZE);
 
+  const mapMarkers: KakaoMapMarker[] = useMemo(() => {
+    const markers: KakaoMapMarker[] = [];
+    pageItems.forEach((item, i) => {
+      const rank = page * PAGE_SIZE + i + 1;
+      markers.push({
+        lat: item.property.lat,
+        lng: item.property.lng,
+        label: `${rank}위`,
+        color: i === 0 ? "red" : "blue",
+      });
+    });
+    if (building) {
+      markers.push({ lat: building.lat, lng: building.lng, label: building.name, color: "star" });
+    }
+    return markers;
+  }, [pageItems, building, page]);
+
   if (loading) {
     return (
       <main className="flex min-h-dvh items-center justify-center">
@@ -147,104 +175,117 @@ function ResultsContent() {
   const articleInfo = detailArticle?.articleDetail as Record<string, unknown> | undefined;
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col px-4 py-6">
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-6"
-      >
-        <button
-          className="mb-3 flex items-center gap-1 text-sm text-gray-400"
-          onClick={() => router.back()}
-        >
-          <ArrowLeft className="size-4" />
-          비교로 돌아가기
-        </button>
-        <h1 className="text-xl font-bold tracking-tight">추천 결과</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          학습된 선호도 기반으로 매물을 순위화했습니다
-          {building && ` · ${building.name} 기준`}
-        </p>
-      </motion.div>
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col">
+      <div className="relative h-[40vh] w-full shrink-0">
+        <KakaoMap
+          center={building ? { lat: building.lat, lng: building.lng } : BUSAN_UNIV}
+          level={5}
+          markers={mapMarkers}
+          className="absolute inset-0"
+          autoFit
+          fitPadding={60}
+        />
+      </div>
 
-      {weightLabels.length > 0 && (
+      <div className="flex-1 px-4 py-5">
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
+          initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="mb-6 rounded-2xl border bg-gray-50 p-4"
+          className="mb-5"
         >
-          <p className="mb-3 text-xs font-semibold text-gray-500">학습된 선호도 가중치</p>
-          <div className="space-y-2">
-            {weightLabels.slice(0, 8).map(({ name, value }) => (
-              <div key={name} className="flex items-center gap-2">
-                <span className="w-16 shrink-0 text-xs text-gray-500">{name}</span>
-                <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-200">
-                  <div
-                    className={`absolute inset-y-0 rounded-full ${value >= 0 ? "left-1/2 bg-blue-500" : "right-1/2 bg-red-400"}`}
-                    style={{ width: `${Math.abs(value) * 50}%` }}
-                  />
-                </div>
-                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-gray-500">
-                  {value >= 0 ? "+" : ""}{value.toFixed(2)}
-                </span>
-              </div>
-            ))}
-          </div>
+          <button
+            className="mb-2 flex items-center gap-1 text-sm text-gray-400"
+            onClick={() => router.back()}
+          >
+            <ArrowLeft className="size-4" />
+            비교로 돌아가기
+          </button>
+          <h1 className="text-xl font-bold tracking-tight">추천 결과</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            학습된 선호도 기반 · 필터 범위 매물 {ranked.length}개 중 순위화
+            {building && ` · ${building.name} 기준`}
+          </p>
         </motion.div>
-      )}
 
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        className="flex flex-col gap-3"
-      >
-        {pageItems.map((item, i) => (
-          <PropertyListCard
-            key={item.property.id}
-            property={item.property}
-            rank={page * PAGE_SIZE + i + 1}
-            score={item.score}
-            walkMin={item.walkMin}
-            onClick={() => handleCardClick(item.property.id)}
-          />
-        ))}
-      </motion.div>
+        {weightLabels.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="mb-5 rounded-2xl border bg-gray-50 p-4"
+          >
+            <p className="mb-3 text-xs font-semibold text-gray-500">학습된 선호도 가중치</p>
+            <div className="space-y-2">
+              {weightLabels.slice(0, 8).map(({ name, value }) => (
+                <div key={name} className="flex items-center gap-2">
+                  <span className="w-16 shrink-0 text-xs text-gray-500">{name}</span>
+                  <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-200">
+                    <div
+                      className={`absolute inset-y-0 rounded-full ${value >= 0 ? "left-1/2 bg-blue-500" : "right-1/2 bg-red-400"}`}
+                      style={{ width: `${Math.abs(value) * 50}%` }}
+                    />
+                  </div>
+                  <span className="w-10 shrink-0 text-right text-xs tabular-nums text-gray-500">
+                    {value >= 0 ? "+" : ""}{value.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
-      {totalPages > 1 && (
-        <div className="mt-6 flex items-center justify-center gap-2">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="flex flex-col gap-3"
+        >
+          {pageItems.map((item, i) => (
+            <PropertyListCard
+              key={item.property.id}
+              property={item.property}
+              rank={page * PAGE_SIZE + i + 1}
+              score={item.score}
+              walkMin={item.walkMin}
+              onClick={() => handleCardClick(item.property.id)}
+            />
+          ))}
+        </motion.div>
+
+        {totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage(page - 1)}
+            >
+              이전
+            </Button>
+            <span className="text-sm text-gray-400">
+              {page + 1} / {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage(page + 1)}
+            >
+              다음
+            </Button>
+          </div>
+        )}
+
+        <div className="mt-8 mb-6 flex justify-center">
           <Button
             variant="outline"
-            size="sm"
-            disabled={page === 0}
-            onClick={() => setPage(page - 1)}
+            className="gap-2"
+            onClick={() => router.push("/")}
           >
-            이전
-          </Button>
-          <span className="text-sm text-gray-400">
-            {page + 1} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages - 1}
-            onClick={() => setPage(page + 1)}
-          >
-            다음
+            <RotateCcw className="size-4" />
+            처음부터 다시 하기
           </Button>
         </div>
-      )}
-
-      <div className="mt-8 flex justify-center">
-        <Button
-          variant="outline"
-          className="gap-2"
-          onClick={() => router.push("/")}
-        >
-          <RotateCcw className="size-4" />
-          처음부터 다시 하기
-        </Button>
       </div>
 
       <AnimatePresence>

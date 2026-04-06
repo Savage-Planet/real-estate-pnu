@@ -39,6 +39,7 @@ function CompareContent() {
   const maxRent = Number(params.get("maxRent") ?? 100);
   const minDeposit = Number(params.get("minDeposit") ?? 0);
   const maxDeposit = Number(params.get("maxDeposit") ?? 50000);
+  const weightsParam = params.get("weights");
 
   const [building, setBuilding] = useState<Building | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
@@ -84,7 +85,11 @@ function CompareContent() {
         const stats = computeStats(typed);
         statsRef.current = stats;
 
-        const model = createModel();
+        let userWeights: Record<string, number> | undefined;
+        if (weightsParam) {
+          try { userWeights = JSON.parse(weightsParam); } catch { /* ignore */ }
+        }
+        const model = createModel(undefined, userWeights);
         modelRef.current = model;
       }
 
@@ -192,7 +197,7 @@ function CompareContent() {
     setConvergenceScore(newScore);
 
     if (nextRound >= MAX_ROUNDS) {
-      router.push(`/results?session=${sessionId}&building=${buildingId}`);
+      router.push(`/results?session=${sessionId}&building=${buildingId}&minRent=${minRent}&maxRent=${maxRent}&minDeposit=${minDeposit}&maxDeposit=${maxDeposit}`);
       return;
     }
 
@@ -245,23 +250,28 @@ function CompareContent() {
     );
   }
 
-  // --- Build walk route polylines ---
-  const walkPolylines: KakaoMapPolyline[] = [];
+  const routePolylines: KakaoMapPolyline[] = [];
   if (mapFocusSide === "a" && pair?.transitA) {
     const t = pair.transitA;
     if (t.propertyToGateRoute.length >= 2) {
-      walkPolylines.push({ path: t.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
+      routePolylines.push({ path: t.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
     }
     if (t.gateToBuildingRoute.length >= 2) {
-      walkPolylines.push({ path: t.gateToBuildingRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+      routePolylines.push({ path: t.gateToBuildingRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+    }
+    if (t.busPath.length >= 2) {
+      routePolylines.push({ path: t.busPath, color: "#22c55e", weight: 4, opacity: 0.7, style: "shortdash" });
     }
   } else if (mapFocusSide === "b" && pair?.transitB) {
     const t = pair.transitB;
     if (t.propertyToGateRoute.length >= 2) {
-      walkPolylines.push({ path: t.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
+      routePolylines.push({ path: t.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
     }
     if (t.gateToBuildingRoute.length >= 2) {
-      walkPolylines.push({ path: t.gateToBuildingRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+      routePolylines.push({ path: t.gateToBuildingRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+    }
+    if (t.busPath.length >= 2) {
+      routePolylines.push({ path: t.busPath, color: "#22c55e", weight: 4, opacity: 0.7, style: "shortdash" });
     }
   }
 
@@ -303,7 +313,7 @@ function CompareContent() {
         center={building ? { lat: building.lat, lng: building.lng } : BUSAN_UNIV}
         level={5}
         markers={allMarkers}
-        polylines={walkPolylines}
+        polylines={routePolylines}
         className="absolute inset-0"
         autoFit
         fitPadding={120}
@@ -336,6 +346,7 @@ function CompareContent() {
             {pair.transitA && pair.transitA.walkMin > 0 && (
               <p className="mt-0.5 text-xs text-gray-400">
                 도보 {pair.transitA.walkMin}분
+                {pair.transitA.busMin > 0 && ` · 버스 ${pair.transitA.busMin}분`}
               </p>
             )}
           </button>
@@ -356,6 +367,7 @@ function CompareContent() {
             {pair.transitB && pair.transitB.walkMin > 0 && (
               <p className="mt-0.5 text-xs text-gray-400">
                 도보 {pair.transitB.walkMin}분
+                {pair.transitB.busMin > 0 && ` · 버스 ${pair.transitB.busMin}분`}
               </p>
             )}
           </button>
@@ -389,7 +401,7 @@ function CompareContent() {
                 <Button
                   className="flex-1"
                   onClick={() =>
-                    router.push(`/results?session=${sessionId}&building=${buildingId}`)
+                    router.push(`/results?session=${sessionId}&building=${buildingId}&minRent=${minRent}&maxRent=${maxRent}&minDeposit=${minDeposit}&maxDeposit=${maxDeposit}`)
                   }
                 >
                   결과 보기
@@ -406,6 +418,9 @@ function CompareContent() {
         onClose={() => setSheetSide(null)}
         onSelect={handleSelect}
         walkTimeMin={sheetTransit?.walkMin}
+        walkDistanceM={sheetTransit?.walkDistanceM}
+        busTimeMin={sheetTransit?.busMin}
+        streetLightCount={sheetSide === "a" ? pair?.lightsA?.length : sheetSide === "b" ? pair?.lightsB?.length : undefined}
         streetLightDensity={sheetDensity}
         label={sheetSide === "a" ? "매물 A" : sheetSide === "b" ? "매물 B" : undefined}
       />

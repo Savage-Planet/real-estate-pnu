@@ -61,7 +61,7 @@ function FilterContent() {
       minDeposit: String(depositRange[0]),
       maxDeposit: String(depositRange[1]),
     });
-    router.push(`/compare?${params.toString()}`);
+    router.push(`/preferences?${params.toString()}`);
   };
 
   return (
@@ -73,7 +73,7 @@ function FilterContent() {
           transition={{ duration: 0.4 }}
         >
           <p className="text-sm font-medium text-muted-foreground">
-            2 / 3 단계
+            2 / 4 단계
           </p>
           <h1 className="mt-1 text-xl font-bold tracking-tight">
             가격 범위를 설정하세요
@@ -172,7 +172,7 @@ function FilterContent() {
             disabled={count === 0}
             onClick={handleStart}
           >
-            매물 비교 시작
+            다음: 선호도 설정
             <ArrowRight className="size-5" />
           </Button>
         </motion.div>

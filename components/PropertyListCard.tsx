@@ -41,7 +41,7 @@ export default function PropertyListCard({
         <div className="mt-1.5 flex flex-wrap gap-2 text-xs text-gray-400">
           <span className="flex items-center gap-0.5">
             <Home className="size-3" />
-            {property.exclusive_area}m² · {property.rooms}방
+            {(property.exclusive_area / 3.3058).toFixed(1)}평 · {property.rooms}방
           </span>
           {walkMin != null && walkMin > 0 && (
             <span className="flex items-center gap-0.5">

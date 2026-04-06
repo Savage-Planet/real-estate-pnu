@@ -2,6 +2,8 @@ import { supabase } from "./supabase";
 import { haversine } from "./geo";
 import type { StreetLight } from "@/types";
 
+export type { StreetLight };
+
 let lightsCache: StreetLight[] | null = null;
 
 export async function loadStreetLights(): Promise<StreetLight[]> {
@@ -52,28 +54,12 @@ export function filterLightsAlongRoute(
     for (let i = 0; i < routePoints.length - 1; i++) {
       const a = routePoints[i];
       const b = routePoints[i + 1];
-      const dist = distanceToSegment(light.lat, light.lng, a.lat, a.lng, b.lat, b.lng);
+      const dist = distanceToSegment(
+        light.lat, light.lng, a.lat, a.lng, b.lat, b.lng,
+      );
       if (dist <= bufferM) return true;
     }
     return false;
-  });
-}
-
-export function filterLightsAlongStraightLine(
-  lights: StreetLight[],
-  startLat: number,
-  startLng: number,
-  endLat: number,
-  endLng: number,
-  bufferM: number = 30,
-): StreetLight[] {
-  return lights.filter((light) => {
-    const dist = distanceToSegment(
-      light.lat, light.lng,
-      startLat, startLng,
-      endLat, endLng,
-    );
-    return dist <= bufferM;
   });
 }
 
