@@ -4,6 +4,8 @@ export interface RewardModel {
   dim: number;
   samples: FeatureVector[];
   comparisons: Array<{ phi: FeatureVector; preferred: 1 | -1 }>;
+  /** 단위 구에 투영된 사전 평균 (기본 PRIOR 또는 사용자 슬라이더). MAP 정규화에 사용 */
+  priorMean: FeatureVector;
 }
 
 const PRIOR_MEAN: FeatureVector = [
@@ -24,6 +26,9 @@ const PRIOR_MEAN: FeatureVector = [
 const NUM_SAMPLES = 200;
 const PROPOSAL_SIGMA = 0.05;
 const BURN_IN = 50;
+
+/** MAP: log N(w|μ₀) ∝ -(λ/2)||w-μ₀||². 비교가 적을수록 λ가 커져 초기 선호를 더 믿음 */
+const PRIOR_LAMBDA_BASE = 14;
 
 function sigmoid(x: number): number {
   if (x > 500) return 1;
@@ -56,6 +61,7 @@ function randn(): number {
 function logPosterior(
   w: FeatureVector,
   comparisons: RewardModel["comparisons"],
+  priorMean: FeatureVector,
 ): number {
   const n = norm(w);
   if (n > 1) return -Infinity;
@@ -66,6 +72,15 @@ function logPosterior(
     logP += Math.log(sigmoid(s) + 1e-10);
   }
 
+  let sqDist = 0;
+  for (let i = 0; i < w.length; i++) {
+    const d = w[i] - priorMean[i];
+    sqDist += d * d;
+  }
+  const nComp = comparisons.length;
+  const priorScale = PRIOR_LAMBDA_BASE / (1 + Math.sqrt(nComp));
+  logP -= (priorScale / 2) * sqDist;
+
   return logP;
 }
 
@@ -74,10 +89,11 @@ function mcmcSample(
   comparisons: RewardModel["comparisons"],
   numSamples: number,
   burnIn: number,
+  priorMean: FeatureVector,
 ): FeatureVector[] {
   const dim = initial.length;
   let current = [...initial];
-  let currentLogP = logPosterior(current, comparisons);
+  let currentLogP = logPosterior(current, comparisons, priorMean);
 
   const samples: FeatureVector[] = [];
   const totalIter = numSamples + burnIn;
@@ -89,7 +105,7 @@ function mcmcSample(
     const proposal = current.map((x) => x + sigma * randn());
     const projected = normalizeToUnitBall(proposal);
 
-    const proposalLogP = logPosterior(projected, comparisons);
+    const proposalLogP = logPosterior(projected, comparisons, priorMean);
     const alpha = Math.min(1, Math.exp(proposalLogP - currentLogP));
 
     if (Math.random() < alpha) {
@@ -143,10 +159,11 @@ export function createModel(dim: number = FEATURE_DIM, userWeights?: Record<stri
   const prior = userWeights ? userWeightsToPrior(userWeights) : PRIOR_MEAN.slice(0, dim);
   while (prior.length < dim) prior.push(0);
 
+  const priorMean = normalizeToUnitBall([...prior]);
   const initial = normalizeToUnitBall(prior);
-  const samples = mcmcSample(initial, [], NUM_SAMPLES, BURN_IN);
+  const samples = mcmcSample(initial, [], NUM_SAMPLES, BURN_IN, priorMean);
 
-  return { dim, samples, comparisons: [] };
+  return { dim, samples, comparisons: [], priorMean };
 }
 
 export function updateModel(
@@ -159,7 +176,7 @@ export function updateModel(
   const comparisons = [...model.comparisons, { phi, preferred: 1 as const }];
 
   const meanW = getMeanWeight(model);
-  const samples = mcmcSample(meanW, comparisons, NUM_SAMPLES, BURN_IN);
+  const samples = mcmcSample(meanW, comparisons, NUM_SAMPLES, BURN_IN, model.priorMean);
 
   return { ...model, samples, comparisons };
 }

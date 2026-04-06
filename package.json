@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "import:street-lights": "node scripts/import-street-lights.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "iconv-lite": "^0.7.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
