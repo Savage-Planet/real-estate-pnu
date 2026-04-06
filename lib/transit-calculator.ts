@@ -20,59 +20,16 @@ export interface TransitResult {
 }
 
 /**
- * 학습·순위 통계용. 도보는 DB만. 버스는 DB 도보가 임계 이상일 때만 API(이진 특징·쿼터 절약).
- * 지도/시트 표시는 `calcTransitForDisplay` 사용.
+ * 초기 통계·commute 맵용. DB 도보만 계산 — ODsay 호출 없음(버스 이진은 null → φ 0.5).
+ * 버스 API는 `calcTransitForDisplay`(페어 표시)에서만 호출.
  */
-export async function calcTransitTime(
+export async function calcCommuteForStats(
   property: Property,
   building: Building,
-): Promise<TransitResult> {
+): Promise<{ walkMin: number; busAvailable: null }> {
   const result: WalkRouteResult | null = await calcWalkRoute(property, building.id);
-
-  if (!result) {
-    return {
-      walkMin: 0,
-      walkDistanceM: 0,
-      nearestGate: property.nearest_gate ?? "",
-      propertyToGateRoute: [],
-      gateToBuildingRoute: [],
-      busMin: 0,
-      busPath: [],
-      busAvailable: null,
-    };
-  }
-
-  let busMin = 0;
-  let busPath: LatLngPoint[] = [];
-  let busAvailable: boolean | null = null;
-
-  if (result.totalWalkMin >= DB_WALK_MIN_FOR_BUS_API) {
-    busAvailable = false;
-    try {
-      const busRoute: OdsayRoute | null = await searchBusRoute(
-        property.lng, property.lat,
-        building.lng, building.lat,
-      );
-      if (busRoute) {
-        busMin = busRoute.busTime;
-        busPath = busRoute.path;
-        busAvailable = true;
-      }
-    } catch {
-      /* ODsay 실패 시 무시 */
-    }
-  }
-
-  return {
-    walkMin: result.totalWalkMin,
-    walkDistanceM: result.totalWalkDistanceM,
-    nearestGate: result.nearestGate,
-    propertyToGateRoute: result.propertyToGateRoute,
-    gateToBuildingRoute: result.gateToBuildingRoute,
-    busMin,
-    busPath,
-    busAvailable,
-  };
+  if (!result) return { walkMin: 0, busAvailable: null };
+  return { walkMin: result.totalWalkMin, busAvailable: null };
 }
 
 /**

@@ -12,6 +12,7 @@ import { calcTransitForDisplay, type TransitResult } from "@/lib/transit-calcula
 import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
 import {
   computeStatsWithCommute,
+  mergeCommuteFeatures,
   toFeatureVector,
   type CommuteFeatures,
   type FeatureStats,
@@ -188,9 +189,10 @@ function CompareContent() {
 
     const winner = preferred === "a" ? currentPair.a : currentPair.b;
     const loser = preferred === "a" ? currentPair.b : currentPair.a;
-    /* 학습 φ는 초기 `computeStatsWithCommute`(도보 임계·버스 API 규칙)와 동일 — 표시용 transit과 혼용하지 않음 */
-    const wCommute = commuteByIdRef.current?.get(winner.id) ?? { walkMin: 0, busAvailable: null };
-    const lCommute = commuteByIdRef.current?.get(loser.id) ?? { walkMin: 0, busAvailable: null };
+    const wTransit = preferred === "a" ? currentPair.transitA : currentPair.transitB;
+    const lTransit = preferred === "a" ? currentPair.transitB : currentPair.transitA;
+    const wCommute = mergeCommuteFeatures(wTransit, commuteByIdRef.current?.get(winner.id));
+    const lCommute = mergeCommuteFeatures(lTransit, commuteByIdRef.current?.get(loser.id));
     const winnerFeat = toFeatureVector(winner, statsRef.current, wCommute);
     const loserFeat = toFeatureVector(loser, statsRef.current, lCommute);
     modelRef.current = updateModel(modelRef.current, winnerFeat, loserFeat);

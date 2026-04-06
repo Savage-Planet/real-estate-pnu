@@ -34,7 +34,7 @@ const WEIGHT_ITEMS: WeightItem[] = [
   {
     key: "busAvailable",
     label: "버스",
-    description: `학습에 반영할 중요도 (가능 여부는 DB+도보 ${DB_WALK_MIN_FOR_BUS_API}분 기준으로 판별)`,
+    description: `학습에 반영할 중요도 (비교 화면에서 도보 ${DB_WALK_MIN_FOR_BUS_API}분 이상일 때만 ODsay로 조회)`,
     defaultValue: 45,
     footerLeft: "안중요",
     footerRight: "중요",

@@ -1,12 +1,12 @@
 import type { Property, Building } from "@/types";
 import { directionSouthNorthOneHot } from "./direction";
-import { calcTransitTime } from "./transit-calculator";
+import { calcCommuteForStats } from "./transit-calculator";
 
 export type FeatureVector = number[];
 
 export const FEATURE_DIM = 15;
 
-/** DB 도보(분) + 버스 경로 가능 여부(학습 특징). busAvailable: null = 임계 미만으로 API 미호출 → φ 0.5 */
+/** DB 도보(분) + 버스 이진. busAvailable: null = 미조회(φ 0.5) — 풀 통계는 DB만, 페어 표시 후 merge 시 API 결과 반영 */
 export interface CommuteFeatures {
   walkMin: number;
   busAvailable: boolean | null;
@@ -48,8 +48,8 @@ export function computeStats(properties: Property[]): FeatureStats {
 }
 
 /**
- * 필터된 매물 전체에 대해 DB 도보 분 + 버스 가능 여부를 구한다.
- * `calcTransitTime`(학습용): 버스 API는 DB 도보 임계(분) 이상일 때만 호출.
+ * 필터된 매물 전체에 대해 DB 도보 분만 구한다. 버스 이진은 ODsay 없이 null(φ 0.5).
+ * 실제 버스 가능 여부는 페어 표시 시에만 API로 알 수 있고, `mergeCommuteFeatures`로 학습에 반영.
  */
 export async function computeStatsWithCommute(
   properties: Property[],
@@ -58,7 +58,7 @@ export async function computeStatsWithCommute(
   const base = computeStats(properties);
   const commuteById = new Map<string, CommuteFeatures>();
   const transits = await Promise.all(
-    properties.map((p) => calcTransitTime(p, building)),
+    properties.map((p) => calcCommuteForStats(p, building)),
   );
   const walks: number[] = [];
   for (let i = 0; i < properties.length; i++) {
@@ -85,6 +85,17 @@ export async function computeStatsWithCommute(
     stats: { ...base, commuteWalkMin: { min, max } },
     commuteById,
   };
+}
+
+/** 표시용 transit(ODsay 포함)이 있으면 우선, 없으면 맵(도보 DB만). */
+export function mergeCommuteFeatures(
+  transit: { walkMin: number; busAvailable: boolean | null } | undefined | null,
+  fromMap: CommuteFeatures | undefined,
+): CommuteFeatures {
+  if (transit != null) {
+    return { walkMin: transit.walkMin, busAvailable: transit.busAvailable };
+  }
+  return fromMap ?? { walkMin: 0, busAvailable: null };
 }
 
 function normalize(value: number, min: number, max: number): number {
