@@ -6,7 +6,8 @@ import type { NextConfig } from "next";
  */
 const ContentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://dapi.kakao.com https://*.kakao.com",
+  // sdk.js(dapi.kakao.com)가 하위로 불러오는 kakao.js는 t1.daumcdn.net 에 있음 (*.kakao.com 과 다름)
+  "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://dapi.kakao.com https://*.kakao.com https://t1.daumcdn.net https://*.daumcdn.net",
   "connect-src 'self' https: wss:",
   "img-src 'self' data: blob: https:",
   "style-src 'self' 'unsafe-inline'",
