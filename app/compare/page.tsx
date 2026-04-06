@@ -8,9 +8,9 @@ import PropertySheet from "@/components/PropertySheet";
 import ProgressBar from "@/components/ProgressBar";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
-import { calcTransitTime, type TransitResult } from "@/lib/transit-calculator";
+import { calcTransitTime, totalTransitMinutes, type TransitResult } from "@/lib/transit-calculator";
 import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
-import { computeStats, toFeatureVector, type FeatureStats } from "@/lib/feature-engineer";
+import { computeStatsWithCommute, toFeatureVector, type FeatureStats } from "@/lib/feature-engineer";
 import { createModel, updateModel, type RewardModel } from "@/lib/reward-model";
 import { selectPair } from "@/lib/query-selector";
 import { createConvergenceState, checkConvergence, type ConvergenceState } from "@/lib/convergence";
@@ -54,6 +54,7 @@ function CompareContent() {
 
   const modelRef = useRef<RewardModel | null>(null);
   const statsRef = useRef<FeatureStats | null>(null);
+  const commuteByIdRef = useRef<Map<string, number> | null>(null);
   const convRef = useRef<ConvergenceState>(createConvergenceState());
   const usedPairsRef = useRef<Set<string>>(new Set());
   const peakScoreRef = useRef(0);
@@ -78,12 +79,13 @@ function CompareContent() {
 
       const { data: props } = await query;
 
-      if (props && props.length >= 2) {
+      if (props && props.length >= 2 && bld) {
         const typed = props as Property[];
         setProperties(typed);
 
-        const stats = computeStats(typed);
+        const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
         statsRef.current = stats;
+        commuteByIdRef.current = commuteById;
 
         let userWeights: Record<string, number> | undefined;
         if (weightsParam) {
@@ -91,12 +93,14 @@ function CompareContent() {
         }
         const model = createModel(undefined, userWeights);
         modelRef.current = model;
+      } else if (props && props.length >= 2) {
+        setProperties(props as Property[]);
       }
 
       setLoading(false);
     }
     init();
-  }, [buildingId, minRent, maxRent, minDeposit, maxDeposit]);
+  }, [buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
 
   const enrichPair = useCallback(
     async (a: Property, b: Property, bld: Building) => {
@@ -149,7 +153,13 @@ function CompareContent() {
 
   useEffect(() => {
     if (!building || properties.length < 2 || !modelRef.current || !statsRef.current) return;
-    const initial = selectPair(modelRef.current, properties, statsRef.current, usedPairsRef.current);
+    const initial = selectPair(
+      modelRef.current,
+      properties,
+      statsRef.current,
+      usedPairsRef.current,
+      commuteByIdRef.current ?? undefined,
+    );
     usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
     enrichPair(initial.a, initial.b, building);
   }, [building, properties, enrichPair]);
@@ -173,8 +183,14 @@ function CompareContent() {
 
     const winner = preferred === "a" ? currentPair.a : currentPair.b;
     const loser = preferred === "a" ? currentPair.b : currentPair.a;
-    const winnerFeat = toFeatureVector(winner, statsRef.current);
-    const loserFeat = toFeatureVector(loser, statsRef.current);
+    const wTransit = preferred === "a" ? currentPair.transitA : currentPair.transitB;
+    const lTransit = preferred === "a" ? currentPair.transitB : currentPair.transitA;
+    const wCommute =
+      totalTransitMinutes(wTransit) ?? commuteByIdRef.current?.get(winner.id) ?? null;
+    const lCommute =
+      totalTransitMinutes(lTransit) ?? commuteByIdRef.current?.get(loser.id) ?? null;
+    const winnerFeat = toFeatureVector(winner, statsRef.current, wCommute);
+    const loserFeat = toFeatureVector(loser, statsRef.current, lCommute);
     modelRef.current = updateModel(modelRef.current, winnerFeat, loserFeat);
 
     const nextRound = round + 1;
@@ -187,6 +203,7 @@ function CompareContent() {
       nextRound,
       MIN_ROUNDS,
       MAX_ROUNDS,
+      commuteByIdRef.current ?? undefined,
     );
     convRef.current = conv;
 
@@ -208,7 +225,13 @@ function CompareContent() {
 
     setTimeout(() => {
       if (!modelRef.current || !statsRef.current || !building) return;
-      const next = selectPair(modelRef.current, properties, statsRef.current, usedPairsRef.current);
+      const next = selectPair(
+        modelRef.current,
+        properties,
+        statsRef.current,
+        usedPairsRef.current,
+        commuteByIdRef.current ?? undefined,
+      );
       usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
       enrichPair(next.a, next.b, building);
     }, 300);
@@ -218,7 +241,13 @@ function CompareContent() {
     setConvergePrompt(null);
     if (!building || !modelRef.current || !statsRef.current) return;
     setTimeout(() => {
-      const next = selectPair(modelRef.current!, properties, statsRef.current!, usedPairsRef.current);
+      const next = selectPair(
+        modelRef.current!,
+        properties,
+        statsRef.current!,
+        usedPairsRef.current,
+        commuteByIdRef.current ?? undefined,
+      );
       usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
       enrichPair(next.a, next.b, building!);
     }, 300);

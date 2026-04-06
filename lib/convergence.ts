@@ -30,10 +30,11 @@ function getTopK(
   candidates: Property[],
   stats: FeatureStats,
   k: number,
+  commuteById?: Map<string, number>,
 ): string[] {
   const scored = candidates.map((p) => ({
     id: p.id,
-    score: scoreProperty(model, toFeatureVector(p, stats)),
+    score: scoreProperty(model, toFeatureVector(p, stats, commuteById?.get(p.id))),
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, k).map((s) => s.id);
@@ -63,8 +64,9 @@ export function checkConvergence(
   round: number,
   minRounds: number,
   maxRounds: number,
+  commuteById?: Map<string, number>,
 ): ConvergenceState {
-  const topK = getTopK(model, candidates, stats, TOP_K);
+  const topK = getTopK(model, candidates, stats, TOP_K, commuteById);
   const history = [...state.topKHistory, topK];
 
   if (round < minRounds) {
@@ -87,7 +89,7 @@ export function checkConvergence(
   }
 
   const concentration = posteriorConcentration(model);
-  const maxEvr = getMaxExpectedVolumeRemoval(model, candidates, stats);
+  const maxEvr = getMaxExpectedVolumeRemoval(model, candidates, stats, commuteById);
   const stable = topKStable(history);
 
   let reason: string | null = null;

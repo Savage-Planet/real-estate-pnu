@@ -49,11 +49,12 @@ export function selectPair(
   candidates: Property[],
   stats: FeatureStats,
   usedPairs?: Set<string>,
+  commuteById?: Map<string, number>,
 ): PropertyPair {
   const featureCache = new Map<string, FeatureVector>();
   const getFeatures = (p: Property): FeatureVector => {
     if (!featureCache.has(p.id)) {
-      featureCache.set(p.id, toFeatureVector(p, stats));
+      featureCache.set(p.id, toFeatureVector(p, stats, commuteById?.get(p.id)));
     }
     return featureCache.get(p.id)!;
   };
@@ -103,7 +104,8 @@ export function getMaxExpectedVolumeRemoval(
   model: RewardModel,
   candidates: Property[],
   stats: FeatureStats,
+  commuteById?: Map<string, number>,
 ): number {
-  const pair = selectPair(model, candidates, stats);
+  const pair = selectPair(model, candidates, stats, undefined, commuteById);
   return pair.expectedVolumeRemoval;
 }

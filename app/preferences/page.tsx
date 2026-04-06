@@ -26,6 +26,7 @@ const WEIGHT_ITEMS: WeightItem[] = [
   { key: "elevator", label: "엘리베이터", description: "있으면 좋다", defaultValue: 30 },
   { key: "year", label: "년식(신축)", description: "최신일수록 좋다", defaultValue: 50 },
   { key: "options", label: "기타옵션", description: "많을수록 좋다", defaultValue: 30 },
+  { key: "commute", label: "통학·도보", description: "캠퍼스까지 짧을수록 좋다", defaultValue: 55 },
   { key: "noise", label: "소음", description: "낮을수록 좋다", defaultValue: 50 },
 ];
 

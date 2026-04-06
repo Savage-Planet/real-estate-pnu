@@ -21,6 +21,7 @@ const PRIOR_MEAN: FeatureVector = [
    0.2,  // 년식 (yearScore 높을수록 최신 → 양의 선호)
    0.1,  // 기타옵션
   -0.2,  // 소음 (낮을수록 좋음)
+   0.15, // 통학 (짧을수록 φ↑ → 양의 선호)
 ];
 
 const NUM_SAMPLES = 200;
@@ -152,6 +153,7 @@ export function userWeightsToPrior(userWeights?: Record<string, number>): Featur
      scale("year", 1),            // 년식
      scale("options", 1),         // 기타옵션
     -scale("noise", 1),           // 소음 (낮을수록 좋음 → 음수)
+     scale("commute", 1),         // 통학 (짧을수록 좋음 → φ 높을수록 선호)
   ];
 }
 

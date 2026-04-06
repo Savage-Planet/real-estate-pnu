@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
 import { supabase } from "@/lib/supabase";
-import { computeStats, toFeatureVector, getMeanWeightLabels } from "@/lib/feature-engineer";
+import { computeStatsWithCommute, toFeatureVector, getMeanWeightLabels } from "@/lib/feature-engineer";
 import { createModel, updateModel, scoreProperty, getMeanWeight, type RewardModel } from "@/lib/reward-model";
 import { calcWalkRoute } from "@/lib/gate-distance";
 import type { Property, Comparison, Building } from "@/types";
@@ -61,14 +61,14 @@ function ResultsContent() {
       ]);
 
       if (bld) setBuilding(bld as Building);
-      if (!comparisons || !props || props.length === 0) {
+      if (!comparisons || !props || props.length === 0 || !bld) {
         setLoading(false);
         return;
       }
 
       const typed = props as Property[];
       const comps = comparisons as Comparison[];
-      const stats = computeStats(typed);
+      const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
 
       let model: RewardModel = createModel();
       const propMap = new Map(typed.map((p) => [p.id, p]));
@@ -82,14 +82,14 @@ function ResultsContent() {
         const loser = c.preferred === "a" ? pB : pA;
         model = updateModel(
           model,
-          toFeatureVector(winner, stats),
-          toFeatureVector(loser, stats),
+          toFeatureVector(winner, stats, commuteById.get(winner.id)),
+          toFeatureVector(loser, stats, commuteById.get(loser.id)),
         );
       }
 
       const scored: ScoredProperty[] = typed.map((p) => ({
         property: p,
-        score: scoreProperty(model, toFeatureVector(p, stats)),
+        score: scoreProperty(model, toFeatureVector(p, stats, commuteById.get(p.id))),
       }));
       scored.sort((a, b) => b.score - a.score);
 
