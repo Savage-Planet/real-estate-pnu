@@ -224,6 +224,10 @@ function CompareContent() {
   );
 
   useEffect(() => {
+    // init에서 setProperties 직후 한 번 리렌더되면 이 effect가 먼저 돌 수 있는데,
+    // 그때는 아직 computeStatsWithCommute가 끝나지 않아 ref가 비어 있다.
+    // loading이 false로 바뀐 뒤에만 통계·모델 ref가 채워진 상태이므로 deps에 포함한다.
+    if (loading) return;
     if (!building || properties.length < 2 || !modelRef.current || !statsRef.current) return;
     try {
       const initial = selectPair(
@@ -239,7 +243,7 @@ function CompareContent() {
       logCompareError("selectPair(초기 페어)", e);
       setPairLoadError(`페어 선택 실패: ${formatCompareError(e)}`);
     }
-  }, [building, properties, enrichPair]);
+  }, [building, properties, enrichPair, loading]);
 
   const handleSelect = useCallback(async (property: Property) => {
     if (!pair || !building || !modelRef.current || !statsRef.current) return;
