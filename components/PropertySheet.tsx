@@ -4,6 +4,7 @@ import { motion, AnimatePresence, type PanInfo } from "framer-motion";
 import { X, Home, MapPin, Clock, Bus, Lightbulb, Shield, ChevronDown, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Property } from "@/types";
+import { mapLegacyDirectionToSouthNorth } from "@/lib/direction";
 
 interface PropertySheetProps {
   property: Property | null;
@@ -21,12 +22,8 @@ interface PropertySheetProps {
 const DRAG_CLOSE_THRESHOLD = 100;
 
 function formatDirection(dir: string | undefined): string {
-  if (!dir) return "-";
-  const map: Record<string, string> = {
-    동향: "동", 서향: "서", 남향: "남", 북향: "북",
-    남동향: "남동", 남서향: "남서", 북동향: "북동", 북서향: "북서",
-  };
-  return map[dir] ?? dir;
+  const d = mapLegacyDirectionToSouthNorth(dir);
+  return d === "남향" ? "남" : "북";
 }
 
 function buildYearLabel(p: Property): string {

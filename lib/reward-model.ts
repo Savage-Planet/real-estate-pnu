@@ -12,7 +12,7 @@ const PRIOR_MEAN: FeatureVector = [
   -0.3,  // 관리비
    0.1,  // 크기 (클수록 좋음)
    0.1,  // 방 개수
-   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // 방향 8방위 (선호 없음)
+   0.0, 0.0, // 남향, 북향 (선호 없음)
    0.1,  // 주차
    0.2,  // CCTV
    0.1,  // 엘리베이터
@@ -120,13 +120,16 @@ export function userWeightsToPrior(userWeights?: Record<string, number>): Featur
     return sign * v * 0.5;
   };
 
+  const d = ((userWeights.directionSouth ?? 50) - 50) / 100;
+
   return [
     -scale("monthlyRent", 1),     // 월세 (낮을수록 좋음 → 음수)
     -scale("deposit", 1),         // 보증금
     -scale("maintenanceFee", 1),  // 관리비
      scale("area", 1),            // 크기
      scale("rooms", 1),           // 방 개수
-     0, 0, 0, 0, 0, 0, 0, 0,     // 방향 8방위
+     d * 0.3,                      // 남향 (슬라이더 높을수록 남향 선호)
+    -d * 0.3,                      // 북향
      scale("parking", 1),         // 주차
      scale("cctv", 1),            // CCTV
      scale("elevator", 1),        // 엘리베이터

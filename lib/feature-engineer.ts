@@ -1,12 +1,9 @@
 import type { Property } from "@/types";
+import { directionSouthNorthOneHot } from "./direction";
 
 export type FeatureVector = number[];
 
-export const FEATURE_DIM = 19;
-
-export const DIRECTION_LABELS = [
-  "동향", "서향", "남향", "북향", "남동향", "남서향", "북동향", "북서향",
-] as const;
+export const FEATURE_DIM = 13;
 
 export interface FeatureStats {
   monthlyRent: { min: number; max: number };
@@ -61,25 +58,19 @@ function optionsScore(p: Property): number {
   return count / 3;
 }
 
-function directionOneHot(direction: string | undefined): number[] {
-  const vec = new Array(8).fill(0);
-  if (!direction) return vec;
-  const idx = DIRECTION_LABELS.indexOf(direction as typeof DIRECTION_LABELS[number]);
-  if (idx >= 0) vec[idx] = 1;
-  return vec;
-}
-
 export function toFeatureVector(
   property: Property,
   stats: FeatureStats,
 ): FeatureVector {
+  const [south, north] = directionSouthNorthOneHot(property.direction);
   return [
     normalize(property.monthly_rent, stats.monthlyRent.min, stats.monthlyRent.max),
     normalize(property.deposit, stats.deposit.min, stats.deposit.max),
     normalize(property.maintenance_fee, stats.maintenanceFee.min, stats.maintenanceFee.max),
     normalize(property.exclusive_area, stats.exclusiveArea.min, stats.exclusiveArea.max),
     normalize(property.rooms, stats.rooms.min, stats.rooms.max),
-    ...directionOneHot(property.direction),
+    south,
+    north,
     property.parking ? 1 : 0,
     property.has_cctv ? 1 : 0,
     property.has_elevator ? 1 : 0,
@@ -91,7 +82,7 @@ export function toFeatureVector(
 
 export const FEATURE_NAMES = [
   "월세", "보증금", "관리비", "크기", "방 개수",
-  "동향", "서향", "남향", "북향", "남동향", "남서향", "북동향", "북서향",
+  "남향", "북향",
   "주차", "CCTV", "엘리베이터", "년식", "기타옵션",
   "소음",
 ];

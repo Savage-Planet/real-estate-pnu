@@ -20,6 +20,7 @@ const WEIGHT_ITEMS: WeightItem[] = [
   { key: "maintenanceFee", label: "관리비", description: "낮을수록 좋다", defaultValue: 60 },
   { key: "area", label: "크기", description: "클수록 좋다", defaultValue: 30 },
   { key: "rooms", label: "방 개수", description: "많을수록 좋다", defaultValue: 30 },
+  { key: "directionSouth", label: "남향 선호", description: "높을수록 남향 선호 (낮으면 북향 선호)", defaultValue: 50 },
   { key: "parking", label: "주차", description: "있으면 좋다", defaultValue: 20 },
   { key: "cctv", label: "CCTV", description: "있으면 좋다", defaultValue: 50 },
   { key: "elevator", label: "엘리베이터", description: "있으면 좋다", defaultValue: 30 },
