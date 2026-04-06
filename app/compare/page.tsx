@@ -129,6 +129,16 @@ function CompareContent() {
             const model = createModel(undefined, userWeights);
             modelRef.current = model;
             logCompare("init 완료", `매물 ${typed.length}개, 통계·모델 준비됨`);
+
+            try {
+              const initial = selectPair(model, typed, stats, usedPairsRef.current, commuteById);
+              usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
+              logCompare("첫 페어 선택", `${initial.a.id} vs ${initial.b.id}`);
+              void enrichPair(initial.a, initial.b, bld as Building);
+            } catch (pe) {
+              logCompareError("selectPair(초기 페어)", pe);
+              setPairLoadError(`페어 선택 실패: ${formatCompareError(pe)}`);
+            }
           } catch (e) {
             logCompareError("computeStatsWithCommute", e);
             setInitError(`통학 통계 계산 실패: ${formatCompareError(e)}`);
@@ -222,28 +232,6 @@ function CompareContent() {
     },
     [],
   );
-
-  useEffect(() => {
-    // init에서 setProperties 직후 한 번 리렌더되면 이 effect가 먼저 돌 수 있는데,
-    // 그때는 아직 computeStatsWithCommute가 끝나지 않아 ref가 비어 있다.
-    // loading이 false로 바뀐 뒤에만 통계·모델 ref가 채워진 상태이므로 deps에 포함한다.
-    if (loading) return;
-    if (!building || properties.length < 2 || !modelRef.current || !statsRef.current) return;
-    try {
-      const initial = selectPair(
-        modelRef.current,
-        properties,
-        statsRef.current,
-        usedPairsRef.current,
-        commuteByIdRef.current ?? undefined,
-      );
-      usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
-      void enrichPair(initial.a, initial.b, building);
-    } catch (e) {
-      logCompareError("selectPair(초기 페어)", e);
-      setPairLoadError(`페어 선택 실패: ${formatCompareError(e)}`);
-    }
-  }, [building, properties, enrichPair, loading]);
 
   const handleSelect = useCallback(async (property: Property) => {
     if (!pair || !building || !modelRef.current || !statsRef.current) return;
