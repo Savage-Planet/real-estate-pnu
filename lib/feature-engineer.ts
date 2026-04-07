@@ -6,10 +6,14 @@ export type FeatureVector = number[];
 
 export const FEATURE_DIM = 15;
 
-/** DB 도보(분) + 버스 이진. busAvailable: null = 미조회(φ 0.5) — 풀 통계는 DB만, 페어 표시 후 merge 시 API 결과 반영 */
+/**
+ * 학습용 통학 특징. 도보·버스 총시간은 DB 기준(computeStatsWithCommute).
+ * 비교 화면 지도/경로는 `calcTransitForDisplay`(ODsay API)만 사용.
+ */
 export interface CommuteFeatures {
   walkMin: number;
-  busAvailable: boolean | null;
+  /** 매물→정문 + 정문→건물 DB 버스 총분. null = 미백필 → φ 0.5 */
+  busTotalMin: number | null;
 }
 
 export interface FeatureStats {
@@ -21,6 +25,8 @@ export interface FeatureStats {
   noiseLevel: { min: number; max: number };
   /** DB 도보만(매물→문+문→건물) — 짧을수록 φ 높게 정규화 */
   commuteWalkMin: { min: number; max: number };
+  /** DB 버스 총분 — 짧을수록 φ 높게 정규화 */
+  commuteBusTotalMin: { min: number; max: number };
 }
 
 export function computeStats(properties: Property[]): FeatureStats {
@@ -44,12 +50,13 @@ export function computeStats(properties: Property[]): FeatureStats {
       ? minMax(noiseLevels)
       : { min: 0, max: 100 },
     commuteWalkMin: { min: 5, max: 45 },
+    commuteBusTotalMin: { min: 0, max: 90 },
   };
 }
 
 /**
- * 필터된 매물 전체에 대해 DB 도보 분만 구한다. 버스 이진은 ODsay 없이 null(φ 0.5).
- * 실제 버스 가능 여부는 페어 표시 시에만 API로 알 수 있고, `mergeCommuteFeatures`로 학습에 반영.
+ * 필터된 매물 + 선택 건물에 대해 DB 도보·DB 버스 총시간으로 commute 맵을 만든다.
+ * ODsay 호출 없음.
  */
 export async function computeStatsWithCommute(
   properties: Property[],
@@ -61,41 +68,60 @@ export async function computeStatsWithCommute(
     properties.map((p) => calcCommuteForStats(p, building)),
   );
   const walks: number[] = [];
+  const busTotals: number[] = [];
   for (let i = 0; i < properties.length; i++) {
     const t = transits[i];
     commuteById.set(properties[i].id, {
       walkMin: t.walkMin,
-      busAvailable: t.busAvailable,
+      busTotalMin: t.busTotalMin,
     });
     if (Number.isFinite(t.walkMin) && t.walkMin > 0) walks.push(t.walkMin);
+    if (t.busTotalMin != null && Number.isFinite(t.busTotalMin)) {
+      busTotals.push(t.busTotalMin);
+    }
   }
-  if (walks.length === 0) {
-    return {
-      stats: { ...base, commuteWalkMin: { min: 5, max: 45 } },
-      commuteById,
-    };
+
+  let commuteWalkMin = base.commuteWalkMin;
+  if (walks.length > 0) {
+    let min = Math.min(...walks);
+    let max = Math.max(...walks);
+    if (min === max) {
+      min = Math.max(0, min - 1);
+      max = max + 1;
+    }
+    commuteWalkMin = { min, max };
   }
-  let min = Math.min(...walks);
-  let max = Math.max(...walks);
-  if (min === max) {
-    min = Math.max(0, min - 1);
-    max = max + 1;
+
+  let commuteBusTotalMin = base.commuteBusTotalMin;
+  if (busTotals.length > 0) {
+    let min = Math.min(...busTotals);
+    let max = Math.max(...busTotals);
+    if (min === max) {
+      min = Math.max(0, min - 1);
+      max = max + 1;
+    }
+    commuteBusTotalMin = { min, max };
   }
+
   return {
-    stats: { ...base, commuteWalkMin: { min, max } },
+    stats: { ...base, commuteWalkMin, commuteBusTotalMin },
     commuteById,
   };
 }
 
-/** 표시용 transit(ODsay 포함)이 있으면 우선, 없으면 맵(도보 DB만). */
+/**
+ * 학습용으로는 항상 `fromMap`(DB commute)만 사용한다.
+ * 표시용 transit(ODsay)은 UI/지도에만 쓰이고, 선호 업데이트에는 반영하지 않는다.
+ */
 export function mergeCommuteFeatures(
-  transit: { walkMin: number; busAvailable: boolean | null } | undefined | null,
+  _transit: { walkMin: number; busAvailable?: boolean | null } | undefined | null,
   fromMap: CommuteFeatures | undefined,
 ): CommuteFeatures {
-  if (transit != null) {
-    return { walkMin: transit.walkMin, busAvailable: transit.busAvailable };
-  }
-  return fromMap ?? { walkMin: 0, busAvailable: null };
+  if (fromMap != null) return fromMap;
+  return {
+    walkMin: 0,
+    busTotalMin: null,
+  };
 }
 
 function normalize(value: number, min: number, max: number): number {
@@ -114,10 +140,14 @@ function commuteWalkFeatureValue(walkMin: number | null | undefined, stats: Feat
   return (max - walkMin) / (max - min);
 }
 
-/** null = API 미조회(도보 짧음) → 0.5, true → 1, false → 0 */
-function commuteBusBinaryFeature(busAvailable: boolean | null | undefined): number {
-  if (busAvailable === null || busAvailable === undefined) return 0.5;
-  return busAvailable ? 1 : 0;
+/** 짧은 버스 총시간일수록 φ↑. null = 미백필 → 0.5 */
+function commuteBusTotalFeatureValue(busTotalMin: number | null | undefined, stats: FeatureStats): number {
+  if (busTotalMin == null || !Number.isFinite(busTotalMin)) return 0.5;
+  const { min, max } = stats.commuteBusTotalMin;
+  if (max <= min) return 0.5;
+  if (busTotalMin <= min) return 1;
+  if (busTotalMin >= max) return 0;
+  return (max - busTotalMin) / (max - min);
 }
 
 function yearScore(p: Property): number {
@@ -143,7 +173,7 @@ export function toFeatureVector(
 ): FeatureVector {
   const [south, north] = directionSouthNorthOneHot(property.direction);
   const walkF = commuteWalkFeatureValue(commute?.walkMin, stats);
-  const busF = commuteBusBinaryFeature(commute?.busAvailable);
+  const busF = commuteBusTotalFeatureValue(commute?.busTotalMin, stats);
   return [
     normalize(property.monthly_rent, stats.monthlyRent.min, stats.monthlyRent.max),
     normalize(property.deposit, stats.deposit.min, stats.deposit.max),
@@ -169,7 +199,7 @@ export const FEATURE_NAMES = [
   "주차", "CCTV", "엘리베이터", "년식", "기타옵션",
   "소음",
   "통학(도보)",
-  "버스 가능",
+  "통학(버스 총시간)",
 ];
 
 export function getMeanWeightLabels(

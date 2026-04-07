@@ -1,5 +1,6 @@
 import { calcWalkRoute, type WalkRouteResult, type LatLngPoint } from "./gate-distance";
 import { searchBusRoute, type OdsayRoute } from "./odsay";
+import { busTotalMinutesFromDb } from "./commute-db";
 import type { Property, Building } from "@/types";
 
 export type { LatLngPoint };
@@ -20,16 +21,18 @@ export interface TransitResult {
 }
 
 /**
- * 초기 통계·commute 맵용. DB 도보만 계산 — ODsay 호출 없음(버스 이진은 null → φ 0.5).
- * 버스 API는 `calcTransitForDisplay`(페어 표시)에서만 호출.
+ * 초기 통계·commute 맵용. DB 도보 + DB 버스 총분 (properties.bus_to_gate_min + buildings.bus_from_gate_min).
+ * ODsay 호출 없음. 버스 미백필 → busTotalMin null → φ 0.5.
+ * 지도 표시 버스는 `calcTransitForDisplay`에서만 API.
  */
 export async function calcCommuteForStats(
   property: Property,
   building: Building,
-): Promise<{ walkMin: number; busAvailable: null }> {
+): Promise<{ walkMin: number; busTotalMin: number | null }> {
   const result: WalkRouteResult | null = await calcWalkRoute(property, building.id);
-  if (!result) return { walkMin: 0, busAvailable: null };
-  return { walkMin: result.totalWalkMin, busAvailable: null };
+  const walkMin = result?.totalWalkMin ?? 0;
+  const busTotalMin = busTotalMinutesFromDb(property, building);
+  return { walkMin, busTotalMin };
 }
 
 /**

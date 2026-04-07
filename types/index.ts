@@ -36,6 +36,11 @@ export interface Property {
   walk_to_gate_m: number | null;
   walk_to_gate_route: Array<[number, number]> | null;
 
+  /** ODsay 백필: 매물 → 부산대 정문 버스 소요(분) */
+  bus_to_gate_min?: number | null;
+  bus_to_gate_transfers?: number | null;
+  bus_to_gate_info?: unknown;
+
   raw_features?: unknown;
   feature_vector?: number[];
   created_at?: string;
@@ -50,6 +55,11 @@ export interface Building {
   lng: number;
   nearest_gate: string | null;
   straight_dist_to_gate: number | null;
+
+  /** ODsay 백필: 정문 → 건물 버스 소요(분) */
+  bus_from_gate_min?: number | null;
+  bus_from_gate_transfers?: number | null;
+  bus_from_gate_info?: unknown;
 }
 
 export interface Gate {

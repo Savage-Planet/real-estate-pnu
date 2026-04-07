@@ -3,13 +3,25 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, RotateCcw, X, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
 import { supabase } from "@/lib/supabase";
-import { computeStatsWithCommute, toFeatureVector, getMeanWeightLabels } from "@/lib/feature-engineer";
-import { createModel, updateModel, scoreProperty, getMeanWeight, type RewardModel } from "@/lib/reward-model";
+import {
+  computeStatsWithCommute,
+  toFeatureVector,
+  getMeanWeightLabels,
+  FEATURE_NAMES,
+} from "@/lib/feature-engineer";
+import {
+  createModel,
+  updateModel,
+  scoreProperty,
+  getMeanWeight,
+  userWeightsToPrior,
+  type RewardModel,
+} from "@/lib/reward-model";
 import { calcWalkRoute } from "@/lib/gate-distance";
 import type { Property, Comparison, Building } from "@/types";
 
@@ -22,6 +34,33 @@ interface ScoredProperty {
   walkMin?: number;
 }
 
+function priceLabel(p: Property): string {
+  if (p.trade_type === "전세") return `전세 ${p.deposit.toLocaleString()}만`;
+  return `월세 ${p.monthly_rent}만/월`;
+}
+
+function pyeong(area: number): string {
+  return `실${(area / 3.3058).toFixed(1)}평`;
+}
+
+function buildYearLabel(p: Property): string {
+  if (p.within_4y) return "4년 이내";
+  if (p.within_10y) return "10년 이내";
+  if (p.within_15y) return "15년 이내";
+  if (p.within_25y) return "25년 이내";
+  return "25년 초과";
+}
+
+function optionTags(p: Property): string[] {
+  const tags: string[] = [];
+  if (p.has_elevator) tags.push("엘리베이터");
+  if (p.has_cctv) tags.push("CCTV");
+  if (p.has_entrance_security) tags.push("현관보안");
+  if (p.has_closet || p.has_builtin_closet) tags.push("수납공간");
+  if (p.parking) tags.push("주차가능");
+  return tags;
+}
+
 function ResultsContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -31,16 +70,16 @@ function ResultsContent() {
   const maxRent = Number(params.get("maxRent") ?? 999);
   const minDeposit = Number(params.get("minDeposit") ?? 0);
   const maxDeposit = Number(params.get("maxDeposit") ?? 99999);
+  const weightsParam = params.get("weights");
 
   const [ranked, setRanked] = useState<ScoredProperty[]>([]);
   const [building, setBuilding] = useState<Building | null>(null);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [weightLabels, setWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
+  const [initialWeightLabels, setInitialWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
 
-  const [detailArticle, setDetailArticle] = useState<Record<string, unknown> | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailPropertyId, setDetailPropertyId] = useState<string | null>(null);
+  const [detailProperty, setDetailProperty] = useState<Property | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -70,14 +109,25 @@ function ResultsContent() {
       const comps = comparisons as Comparison[];
       const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
 
-      let model: RewardModel = createModel();
+      // Compute initial weights from user preferences
+      let userWeights: Record<string, number> | undefined;
+      if (weightsParam) {
+        try { userWeights = JSON.parse(weightsParam); } catch { /* ignore */ }
+      }
+      const initialPrior = userWeightsToPrior(userWeights);
+      const initialLabels = FEATURE_NAMES.map((name, i) => ({
+        name,
+        value: initialPrior[i] ?? 0,
+      }));
+      setInitialWeightLabels(initialLabels);
+
+      let model: RewardModel = createModel(undefined, userWeights);
       const propMap = new Map(typed.map((p) => [p.id, p]));
 
       for (const c of comps) {
         const pA = propMap.get(c.property_a);
         const pB = propMap.get(c.property_b);
         if (!pA || !pB) continue;
-
         const winner = c.preferred === "a" ? pA : pB;
         const loser = c.preferred === "a" ? pB : pA;
         model = updateModel(
@@ -105,9 +155,7 @@ function ResultsContent() {
         normalized.map((s) => calcWalkRoute(s.property, buildingId).catch(() => null)),
       );
       for (let i = 0; i < normalized.length; i++) {
-        if (walkResults[i]) {
-          normalized[i].walkMin = walkResults[i]!.totalWalkMin;
-        }
+        if (walkResults[i]) normalized[i].walkMin = walkResults[i]!.totalWalkMin;
       }
 
       setRanked(normalized);
@@ -119,29 +167,11 @@ function ResultsContent() {
       setLoading(false);
     }
     init();
-  }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit]);
+  }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
 
-  async function handleCardClick(propertyId: string) {
-    setDetailPropertyId(propertyId);
-    setDetailLoading(true);
-    setDetailArticle(null);
-
-    try {
-      const res = await fetch(`/api/article/${propertyId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setDetailArticle(data);
-      }
-    } catch {
-      /* 네이버 API 실패 시 무시 */
-    } finally {
-      setDetailLoading(false);
-    }
-  }
-
-  function closeDetail() {
-    setDetailPropertyId(null);
-    setDetailArticle(null);
+  function handleCardClick(propertyId: string) {
+    const found = ranked.find((r) => r.property.id === propertyId);
+    if (found) setDetailProperty(found.property);
   }
 
   const pageItems = ranked.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -172,7 +202,13 @@ function ResultsContent() {
     );
   }
 
-  const articleInfo = detailArticle?.articleDetail as Record<string, unknown> | undefined;
+  // Build initial vs final comparison data
+  const weightComparison = weightLabels.map((learned) => {
+    const initial = initialWeightLabels.find((iw) => iw.name === learned.name);
+    const initialVal = initial?.value ?? 0;
+    const delta = learned.value - initialVal;
+    return { name: learned.name, initial: initialVal, final: learned.value, delta };
+  });
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col">
@@ -207,33 +243,55 @@ function ResultsContent() {
           </p>
         </motion.div>
 
-        {weightLabels.length > 0 && (
+        {/* Weight comparison: Initial vs Learned */}
+        {weightComparison.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
             className="mb-5 rounded-2xl border bg-gray-50 p-4"
           >
-            <p className="mb-3 text-xs font-semibold text-gray-500">학습된 선호도 가중치</p>
+            <p className="mb-3 text-xs font-semibold text-gray-500">선호도 변화 (초기 → 학습)</p>
             <div className="space-y-2">
-              {weightLabels.slice(0, 8).map(({ name, value }) => (
+              {weightComparison.slice(0, 10).map(({ name, initial, final: fin, delta }) => (
                 <div key={name} className="flex items-center gap-2">
-                  <span className="w-16 shrink-0 text-xs text-gray-500">{name}</span>
+                  <span className="w-20 shrink-0 text-xs text-gray-500">{name}</span>
                   <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-200">
                     <div
-                      className={`absolute inset-y-0 rounded-full ${value >= 0 ? "left-1/2 bg-blue-500" : "right-1/2 bg-red-400"}`}
-                      style={{ width: `${Math.abs(value) * 50}%` }}
+                      className={`absolute inset-y-0 rounded-full ${fin >= 0 ? "left-1/2 bg-blue-500" : "right-1/2 bg-red-400"}`}
+                      style={{ width: `${Math.min(Math.abs(fin) * 50, 50)}%` }}
+                    />
+                    <div
+                      className={`absolute inset-y-0 rounded-full border-2 ${initial >= 0 ? "left-1/2 border-blue-300" : "right-1/2 border-red-300"}`}
+                      style={{ width: `${Math.min(Math.abs(initial) * 50, 50)}%`, background: "transparent" }}
                     />
                   </div>
-                  <span className="w-10 shrink-0 text-right text-xs tabular-nums text-gray-500">
-                    {value >= 0 ? "+" : ""}{value.toFixed(2)}
+                  <span className="flex w-14 shrink-0 items-center justify-end gap-0.5 text-right text-xs tabular-nums">
+                    {Math.abs(delta) > 0.01 ? (
+                      <>
+                        {delta > 0 ? (
+                          <ArrowUpRight className="size-3 text-green-500" />
+                        ) : (
+                          <ArrowDownRight className="size-3 text-red-400" />
+                        )}
+                        <span className={delta > 0 ? "text-green-600" : "text-red-500"}>
+                          {delta > 0 ? "+" : ""}{delta.toFixed(2)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-400">{fin.toFixed(2)}</span>
+                    )}
                   </span>
                 </div>
               ))}
             </div>
+            <p className="mt-2 text-[10px] text-gray-400">
+              테두리: 초기 가중치 · 채움: 학습 후 가중치
+            </p>
           </motion.div>
         )}
 
+        {/* Property list */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -254,52 +312,37 @@ function ResultsContent() {
 
         {totalPages > 1 && (
           <div className="mt-6 flex items-center justify-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page === 0}
-              onClick={() => setPage(page - 1)}
-            >
+            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>
               이전
             </Button>
-            <span className="text-sm text-gray-400">
-              {page + 1} / {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= totalPages - 1}
-              onClick={() => setPage(page + 1)}
-            >
+            <span className="text-sm text-gray-400">{page + 1} / {totalPages}</span>
+            <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>
               다음
             </Button>
           </div>
         )}
 
         <div className="mt-8 mb-6 flex justify-center">
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => router.push("/")}
-          >
+          <Button variant="outline" className="gap-2" onClick={() => router.push("/")}>
             <RotateCcw className="size-4" />
             처음부터 다시 하기
           </Button>
         </div>
       </div>
 
+      {/* Property detail modal - uses our own DB data */}
       <AnimatePresence>
-        {detailPropertyId && (
+        {detailProperty && (
           <motion.div
             className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={closeDetail}
+            onClick={() => setDetailProperty(null)}
           >
             <motion.div
               className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl"
-              style={{ maxHeight: "70vh" }}
+              style={{ maxHeight: "75vh" }}
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -308,60 +351,88 @@ function ResultsContent() {
             >
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-base font-bold">매물 상세 정보</h3>
-                <button onClick={closeDetail} className="rounded-full p-1 text-gray-400 hover:bg-gray-100">
+                <button onClick={() => setDetailProperty(null)} className="rounded-full p-1 text-gray-400 hover:bg-gray-100">
                   <X className="size-5" />
                 </button>
               </div>
 
-              {detailLoading && (
-                <div className="flex items-center justify-center py-10">
-                  <Loader2 className="size-6 animate-spin text-gray-400" />
-                </div>
-              )}
-
-              {!detailLoading && articleInfo && (
-                <div className="overflow-y-auto space-y-3 text-sm" style={{ maxHeight: "calc(70vh - 80px)" }}>
-                  <InfoRow label="매물명" value={String(articleInfo.articleName ?? "-")} />
-                  <InfoRow label="거래 유형" value={String(articleInfo.tradeTypeName ?? "-")} />
-                  <InfoRow label="가격" value={String(articleInfo.dealOrWarrantPrc ?? "-")} />
-                  <InfoRow label="면적" value={`${articleInfo.area1 ?? "-"}㎡ / 전용 ${articleInfo.area2 ?? "-"}㎡`} />
-                  <InfoRow label="방향" value={String(articleInfo.direction ?? "-")} />
-                  <InfoRow label="층" value={`${articleInfo.floorInfo ?? "-"}`} />
-                  <InfoRow label="입주가능일" value={String(articleInfo.moveInDate ?? "-")} />
-                  <InfoRow label="관리비" value={String(articleInfo.maintenanceFee ?? "-")} />
-                  {articleInfo.articleFeatureDesc != null && (
-                    <div>
-                      <p className="text-xs text-gray-400 mb-1">특징</p>
-                      <p className="text-gray-700">{String(articleInfo.articleFeatureDesc)}</p>
-                    </div>
+              <div className="overflow-y-auto space-y-4" style={{ maxHeight: "calc(75vh - 80px)" }}>
+                {/* Price header */}
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">
+                    {priceLabel(detailProperty)}
+                  </h2>
+                  {detailProperty.trade_type !== "전세" && (
+                    <p className="text-sm text-gray-500">보증금 {detailProperty.deposit.toLocaleString()}만</p>
                   )}
-                  <a
-                    href={`https://new.land.naver.com/rooms?articleNo=${detailPropertyId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 flex items-center gap-1 text-blue-600 text-sm font-medium"
-                  >
-                    네이버 부동산에서 보기
-                    <ExternalLink className="size-3.5" />
-                  </a>
+                  <p className="mt-0.5 flex items-center gap-1 text-sm text-gray-500">
+                    <MapPin className="size-3.5 shrink-0" />
+                    {detailProperty.address}
+                  </p>
                 </div>
-              )}
 
-              {!detailLoading && !articleInfo && (
-                <div className="py-8 text-center text-sm text-gray-400">
-                  매물 상세 정보를 불러올 수 없습니다.
-                  <br />
-                  <a
-                    href={`https://new.land.naver.com/rooms?articleNo=${detailPropertyId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-blue-600 font-medium"
-                  >
-                    네이버 부동산에서 직접 보기
-                    <ExternalLink className="size-3.5" />
-                  </a>
+                {/* Info grid */}
+                <div className="grid grid-cols-3 gap-3">
+                  <InfoCell icon={<Home className="size-4" />} label="실평수" value={pyeong(detailProperty.exclusive_area)} />
+                  <InfoCell icon={<Home className="size-4" />} label="방" value={`${detailProperty.rooms}개`} />
+                  <InfoCell icon={<Home className="size-4" />} label="방향" value={detailProperty.direction || "-"} />
                 </div>
-              )}
+                <div className="grid grid-cols-3 gap-3">
+                  <InfoCell icon={<Clock className="size-4" />} label="관리비" value={`${(detailProperty.maintenance_fee / 10000).toFixed(1)}만`} />
+                  <InfoCell icon={<Home className="size-4" />} label="년식" value={buildYearLabel(detailProperty)} />
+                  <InfoCell icon={<Home className="size-4" />} label="유형" value={detailProperty.property_type} />
+                </div>
+
+                {/* Walk / Bus info */}
+                {(detailProperty.walk_to_gate_min != null || detailProperty.bus_to_gate_min != null) && (
+                  <div className="rounded-xl bg-gray-50 p-3">
+                    <p className="mb-2 text-xs font-semibold text-gray-500">이동 정보</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+                      {detailProperty.walk_to_gate_min != null && detailProperty.walk_to_gate_min > 0 && (
+                        <span className="flex items-center gap-1.5">
+                          <Clock className="size-4 text-green-600" />
+                          도보 {Math.round(detailProperty.walk_to_gate_min)}분
+                          {detailProperty.walk_to_gate_m != null && (
+                            <span className="text-xs text-gray-400">({(detailProperty.walk_to_gate_m / 1000).toFixed(1)}km)</span>
+                          )}
+                        </span>
+                      )}
+                      {detailProperty.bus_to_gate_min != null && detailProperty.bus_to_gate_min > 0 && (
+                        <span className="flex items-center gap-1.5">
+                          <Bus className="size-4 text-emerald-600" />
+                          버스 {Math.round(detailProperty.bus_to_gate_min)}분
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Option tags */}
+                {optionTags(detailProperty).length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {optionTags(detailProperty).map((tag) => (
+                      <span
+                        key={tag}
+                        className="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+                      >
+                        <Shield className="size-3" />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Naver link */}
+                <a
+                  href={`https://new.land.naver.com/rooms?articleNo=${detailProperty.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-sm font-medium text-blue-600"
+                >
+                  네이버 부동산에서 보기
+                  <ExternalLink className="size-3.5" />
+                </a>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -370,11 +441,12 @@ function ResultsContent() {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoCell({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-start gap-2">
-      <span className="w-20 shrink-0 text-xs text-gray-400">{label}</span>
-      <span className="text-gray-700">{value}</span>
+    <div className="flex flex-col items-center gap-1 rounded-xl bg-gray-50 py-3">
+      <span className="text-gray-400">{icon}</span>
+      <span className="text-[11px] text-gray-400">{label}</span>
+      <span className="text-sm font-semibold text-gray-800">{value}</span>
     </div>
   );
 }

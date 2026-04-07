@@ -22,7 +22,7 @@ const PRIOR_MEAN: FeatureVector = [
    0.1,  // 기타옵션
   -0.2,  // 소음 (낮을수록 좋음)
    0.15, // 통학 도보 (짧을수록 φ↑)
-   0.06, // 버스 경로 가능 (가능할수록 φ↑)
+   0.06, // 통학 버스 총시간 짧을수록 φ↑ (DB 분 단위 정규화)
 ];
 
 const NUM_SAMPLES = 200;
@@ -155,7 +155,7 @@ export function userWeightsToPrior(userWeights?: Record<string, number>): Featur
      scale("options", 1),         // 기타옵션
     -scale("noise", 1),           // 소음 (낮을수록 좋음 → 음수)
      scale("commute", 1),         // 통학 도보 (짧을수록 좋음)
-     scale("busAvailable", 1),    // 버스로 갈 수 있으면 좋다 (이진 φ)
+     scale("busAvailable", 1),    // 버스 통학 총시간 (짧을수록 좋음, 슬라이더 키명 유지)
   ];
 }
 

@@ -29,10 +29,14 @@ export default function PropertyListCard({
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-gray-900">
-          {property.monthly_rent}만/월
-          <span className="ml-1 font-normal text-gray-400">
-            보증금 {property.deposit}만
-          </span>
+          {property.trade_type === "전세"
+            ? `전세 ${property.deposit.toLocaleString()}만`
+            : `월세 ${property.monthly_rent}만/월`}
+          {property.trade_type !== "전세" && (
+            <span className="ml-1 font-normal text-gray-400">
+              보증금 {property.deposit.toLocaleString()}만
+            </span>
+          )}
         </p>
         <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-gray-500">
           <MapPin className="size-3 shrink-0" />
@@ -41,7 +45,7 @@ export default function PropertyListCard({
         <div className="mt-1.5 flex flex-wrap gap-2 text-xs text-gray-400">
           <span className="flex items-center gap-0.5">
             <Home className="size-3" />
-            {(property.exclusive_area / 3.3058).toFixed(1)}평 · {property.rooms}방
+            실{(property.exclusive_area / 3.3058).toFixed(1)}평 · {property.rooms}방
           </span>
           {walkMin != null && walkMin > 0 && (
             <span className="flex items-center gap-0.5">

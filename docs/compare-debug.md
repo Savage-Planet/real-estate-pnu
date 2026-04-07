@@ -10,7 +10,7 @@
 | 접두/문구 | 의미 |
 |-----------|------|
 | `init 완료` | 매물·통계·모델 준비 완료 |
-| `computeStatsWithCommute` | 초기 통학 통계( DB 도보 ) 실패 |
+| `computeStatsWithCommute` | 초기 통학 통계( DB 도보 + DB 버스 총분 ) 실패 |
 | `buildings` / `properties` | Supabase 건물·매물 쿼리 오류 |
 | `enrichPair 시작` / `setPair 완료` | 페어 한 쌍에 대한 경로·가로등 처리 |
 | `calcTransitForDisplay` | 도보/ODsay 경로 단계에서 오류 또는 타임아웃 |
@@ -20,7 +20,9 @@
 ## Network 탭
 
 - **Supabase** (`*.supabase.co`): `buildings`, `properties`, `building_gate_routes`, `street_lights`
-- **ODsay** (`api.odsay.com`): 도보 18분 이상일 때만 `searchPubTransPathT`
+- **ODsay** (`api.odsay.com`): 도보 18분 이상일 때만 `searchPubTransPathT` (지도·경로 **표시**용)
+
+**학습**에 쓰는 버스 시간은 Supabase의 `bus_to_gate_min` + `bus_from_gate_min`(백필)이며, ODsay 응답과 다를 수 있습니다.
 
 요청이 **Pending**으로 오래 남으면 해당 API가 느리거나 막힌 것입니다.
 
