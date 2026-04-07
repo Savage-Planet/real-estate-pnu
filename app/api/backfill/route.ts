@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+let _admin: SupabaseClient | null = null;
+function getAdmin(): SupabaseClient {
+  if (!_admin) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw new Error("Missing SUPABASE env vars");
+    _admin = createClient(url, key);
+  }
+  return _admin;
+}
 
 /**
  * POST /api/backfill
@@ -39,7 +45,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error } = await supabaseAdmin
+  const { error } = await getAdmin()
     .from(table)
     .update(data)
     .eq("id", id);
