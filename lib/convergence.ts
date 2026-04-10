@@ -14,6 +14,8 @@ export interface ConvergenceState {
   converged: boolean;
   reason: string | null;
   convergenceScore: number;
+  /** EVR 기반 학습률 계산용 기준점(최소 라운드 진입 시점 EVR) */
+  evrStart: number | null;
 }
 
 export function createConvergenceState(): ConvergenceState {
@@ -22,7 +24,17 @@ export function createConvergenceState(): ConvergenceState {
     converged: false,
     reason: null,
     convergenceScore: 0,
+    evrStart: null,
   };
+}
+
+function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
+function evrLearningRate(maxEvr: number, evrStart: number): number {
+  const denom = Math.max(evrStart - VOLUME_THRESHOLD, 1e-6);
+  return clamp01((evrStart - maxEvr) / denom);
 }
 
 function getTopK(
@@ -68,16 +80,27 @@ export function checkConvergence(
 ): ConvergenceState {
   const topK = getTopK(model, candidates, stats, TOP_K, commuteById);
   const history = [...state.topKHistory, topK];
+  const concentration = posteriorConcentration(model);
+  const maxEvr = getMaxExpectedVolumeRemoval(model, candidates, stats, commuteById);
+  const stable = topKStable(history);
+  let evrStart = state.evrStart;
 
   if (round < minRounds) {
-    const progress = round / minRounds;
+    const warmup = (round / minRounds) * 0.4;
     return {
       topKHistory: history,
       converged: false,
       reason: null,
-      convergenceScore: progress * 0.5,
+      convergenceScore: clamp01(warmup),
+      evrStart,
     };
   }
+
+  if (evrStart == null) {
+    evrStart = Math.max(maxEvr, VOLUME_THRESHOLD + 1e-6);
+  }
+
+  const learningRate = evrLearningRate(maxEvr, evrStart);
 
   if (round >= maxRounds) {
     return {
@@ -85,23 +108,12 @@ export function checkConvergence(
       converged: true,
       reason: "최대 비교 횟수에 도달했습니다",
       convergenceScore: 1,
+      evrStart,
     };
   }
 
-  const concentration = posteriorConcentration(model);
-  const maxEvr = getMaxExpectedVolumeRemoval(model, candidates, stats, commuteById);
-  const stable = topKStable(history);
-
   let reason: string | null = null;
   let converged = false;
-  let score = 0.5;
-
-  const concScore = Math.max(0, Math.min(concentration / CONCENTRATION_THRESHOLD, 1));
-  const evrScore = Math.max(0, Math.min(1, (0.3 - maxEvr) / 0.29));
-  const stabilityScore = stable ? 1 : (history.length >= 2 ? 0.5 : 0);
-
-  score = 0.5 + 0.5 * (concScore * 0.4 + evrScore * 0.3 + stabilityScore * 0.3);
-  score = Math.max(0, Math.min(1, score));
 
   if (stable) {
     converged = true;
@@ -118,6 +130,7 @@ export function checkConvergence(
     topKHistory: history,
     converged,
     reason,
-    convergenceScore: Math.max(0, Math.min(score, 1)),
+    convergenceScore: learningRate,
+    evrStart,
   };
 }
