@@ -68,6 +68,41 @@ function topKStable(history: string[][]): boolean {
   return true;
 }
 
+export interface RoundMetrics {
+  round: number;
+  evr: number;
+  concentration: number;
+  topKStability: number;
+}
+
+export function computeRoundMetrics(
+  model: RewardModel,
+  candidates: Property[],
+  stats: FeatureStats,
+  round: number,
+  topKHistory: string[][],
+  commuteById?: Map<string, CommuteFeatures>,
+): RoundMetrics {
+  const topK = getTopK(model, candidates, stats, TOP_K, commuteById);
+  const history = [...topKHistory, topK];
+  const evr = getMaxExpectedVolumeRemoval(model, candidates, stats, commuteById);
+  const concentration = posteriorConcentration(model);
+
+  let matchCount = 0;
+  if (history.length >= 2) {
+    const prev = history[history.length - 2];
+    const curr = history[history.length - 1];
+    for (let i = 0; i < Math.min(prev.length, curr.length); i++) {
+      if (prev[i] === curr[i]) matchCount++;
+    }
+  }
+  const topKStability = history.length >= 2
+    ? matchCount / TOP_K
+    : 0;
+
+  return { round, evr, concentration, topKStability };
+}
+
 export function checkConvergence(
   state: ConvergenceState,
   model: RewardModel,

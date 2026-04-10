@@ -23,6 +23,10 @@ import {
   type RewardModel,
 } from "@/lib/reward-model";
 import { calcWalkRoute } from "@/lib/gate-distance";
+import { computeRoundMetrics, type RoundMetrics } from "@/lib/convergence";
+import { getMaxExpectedVolumeRemoval } from "@/lib/query-selector";
+import { posteriorConcentration } from "@/lib/reward-model";
+import ConvergenceChart from "@/components/ConvergenceChart";
 import type { Property, Comparison, Building } from "@/types";
 
 const PAGE_SIZE = 10;
@@ -90,6 +94,7 @@ function ResultsContent() {
   const [initialWeightLabels, setInitialWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
 
   const [detailProperty, setDetailProperty] = useState<Property | null>(null);
+  const [roundMetrics, setRoundMetrics] = useState<RoundMetrics[]>([]);
 
   interface Explanation {
     summary?: string;
@@ -146,8 +151,11 @@ function ResultsContent() {
 
       let model: RewardModel = createModel(undefined, userWeights);
       const propMap = new Map(typed.map((p) => [p.id, p]));
+      const metricsHistory: RoundMetrics[] = [];
+      let topKHistory: string[][] = [];
 
-      for (const c of comps) {
+      for (let ci = 0; ci < comps.length; ci++) {
+        const c = comps[ci];
         const pA = propMap.get(c.property_a);
         const pB = propMap.get(c.property_b);
         if (!pA || !pB) continue;
@@ -158,7 +166,20 @@ function ResultsContent() {
           toFeatureVector(winner, stats, commuteById.get(winner.id)),
           toFeatureVector(loser, stats, commuteById.get(loser.id)),
         );
+
+        const m = computeRoundMetrics(
+          model, typed, stats, ci + 1, topKHistory,
+          commuteById ?? undefined,
+        );
+        metricsHistory.push(m);
+        topKHistory = [...topKHistory, typed
+          .map((p) => ({ id: p.id, s: scoreProperty(model, toFeatureVector(p, stats, commuteById.get(p.id))) }))
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 5)
+          .map((x) => x.id),
+        ];
       }
+      setRoundMetrics(metricsHistory);
 
       const scored: ScoredProperty[] = typed.map((p) => ({
         property: p,
@@ -387,6 +408,19 @@ function ResultsContent() {
             <p className="mt-2 text-[10px] text-gray-400">
               테두리: 초기 가중치 · 채움: 학습 후 가중치
             </p>
+          </motion.div>
+        )}
+
+        {/* Convergence metrics chart */}
+        {roundMetrics.length >= 2 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.12 }}
+            className="mb-5 rounded-2xl border bg-gray-50 p-4"
+          >
+            <p className="mb-3 text-xs font-semibold text-gray-500">수렴 지표 변화</p>
+            <ConvergenceChart data={roundMetrics} />
           </motion.div>
         )}
 

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
-const GEMINI_MODEL = "gemini-2.0-flash";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-1.5-flash"] as const;
 const MAX_RETRIES = 2;
 
 function sleep(ms: number): Promise<void> {
@@ -29,6 +28,46 @@ interface ExplainRequest {
   topProperties: PropertySummary[];
   weightChanges: Array<{ name: string; initial: number; final: number; delta: number }>;
   totalComparisons: number;
+}
+
+interface GeminiCallResult {
+  res: Response | null;
+  errText: string;
+}
+
+async function callGeminiWithRetry(
+  model: string,
+  promptText: string,
+): Promise<GeminiCallResult> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+  let res: Response | null = null;
+  let errText = "";
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 1024,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+
+    if (res.ok) break;
+
+    errText = await res.text();
+    // 429/503 are usually temporary pressure; retry same model first.
+    if ((res.status !== 429 && res.status !== 503) || attempt >= MAX_RETRIES) break;
+    const retryAfter = Number(res.headers.get("retry-after") ?? 0);
+    const delayMs = retryAfter > 0 ? retryAfter * 1000 : 1200 * (attempt + 1);
+    await sleep(delayMs);
+  }
+
+  return { res, errText };
 }
 
 const SYSTEM_PROMPT = `당신은 부산대 학생을 위한 부동산 추천 분석가입니다.
@@ -79,31 +118,24 @@ export async function POST(request: Request) {
   );
 
   try {
+    const promptText = `${SYSTEM_PROMPT}\n\n데이터:\n${userContent}`;
     let res: Response | null = null;
     let lastErrText = "";
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      res = await fetch(`${GEMINI_URL}${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            { role: "user", parts: [{ text: `${SYSTEM_PROMPT}\n\n데이터:\n${userContent}` }] },
-          ],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 1024,
-            responseMimeType: "application/json",
-          },
-        }),
-      });
+    let lastStatus = 502;
 
-      if (res.ok) break;
+    for (const model of GEMINI_MODELS) {
+      const result = await callGeminiWithRetry(model, promptText);
+      res = result.res;
+      lastErrText = result.errText;
+      lastStatus = res?.status ?? 502;
+      if (res?.ok) break;
 
-      lastErrText = await res.text();
-      if (res.status !== 429 || attempt >= MAX_RETRIES) break;
-      const retryAfter = Number(res.headers.get("retry-after") ?? 0);
-      const delayMs = retryAfter > 0 ? retryAfter * 1000 : 1200 * (attempt + 1);
-      await sleep(delayMs);
+      // If model is unavailable/not found, continue to fallback model.
+      if (lastStatus === 404) {
+        continue;
+      }
+      // Other failures are likely project/quotas issues and won't improve with fallback.
+      break;
     }
 
     if (!res) {
@@ -118,6 +150,12 @@ export async function POST(request: Request) {
           { status: 429 },
         );
       }
+      if (res.status === 503) {
+        return NextResponse.json(
+          { error: "Gemini API 503: 현재 모델 요청이 많습니다. 잠시 후 다시 시도해 주세요." },
+          { status: 503 },
+        );
+      }
       return NextResponse.json(
         { error: `Gemini API ${res.status}` },
         { status: 502 },
@@ -125,14 +163,28 @@ export async function POST(request: Request) {
     }
 
     const geminiRes = await res.json();
-    const textContent =
+    let textContent =
       geminiRes?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+    textContent = textContent
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
 
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(textContent);
     } catch {
-      parsed = { summary: textContent.slice(0, 200), raw: true };
+      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {
+          parsed = { summary: textContent.slice(0, 100) };
+        }
+      } else {
+        parsed = { summary: textContent.slice(0, 100) };
+      }
     }
 
     return NextResponse.json({ ok: true, explanation: parsed });
