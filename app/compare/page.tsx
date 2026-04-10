@@ -420,7 +420,7 @@ function CompareContent() {
     <main className="relative h-dvh w-full overflow-hidden">
       {/* Progress bar */}
       <div className="absolute inset-x-0 top-0 z-10 px-4 pt-3">
-        <ProgressBar convergence={convergenceScore} round={round} minRounds={MIN_ROUNDS} maxRounds={MAX_ROUNDS} />
+        <ProgressBar learningRate={convergenceScore} round={round} minRounds={MIN_ROUNDS} maxRounds={MAX_ROUNDS} />
       </div>
 
       {pairLoadError && (

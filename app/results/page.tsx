@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
@@ -80,6 +80,18 @@ function ResultsContent() {
   const [initialWeightLabels, setInitialWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
 
   const [detailProperty, setDetailProperty] = useState<Property | null>(null);
+
+  interface Explanation {
+    summary?: string;
+    whyTop1?: string[];
+    top1VsTop2?: string[];
+    weightShift?: string[];
+    caveat?: string;
+  }
+
+  const [explanation, setExplanation] = useState<Explanation | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -165,9 +177,63 @@ function ResultsContent() {
       setWeightLabels(labels);
 
       setLoading(false);
+
+      const wc = labels.map((learned) => {
+        const ini = initialLabels.find((iw) => iw.name === learned.name);
+        const initialVal = ini?.value ?? 0;
+        return { name: learned.name, initial: initialVal, final: learned.value, delta: learned.value - initialVal };
+      });
+      fetchExplanation(normalized, (bld as Building).name, wc, comps.length);
     }
     init();
   }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
+
+  async function fetchExplanation(
+    topItems: ScoredProperty[],
+    bldName: string,
+    wc: Array<{ name: string; initial: number; final: number; delta: number }>,
+    compCount: number,
+  ) {
+    setExplainLoading(true);
+    setExplainError(null);
+    try {
+      const topProperties = topItems.slice(0, 3).map((item, i) => ({
+        rank: i + 1,
+        price: priceLabel(item.property),
+        deposit: `${item.property.deposit.toLocaleString()}만`,
+        area: pyeong(item.property.exclusive_area),
+        rooms: item.property.rooms,
+        direction: item.property.direction || "-",
+        year: buildYearLabel(item.property),
+        walkMin: item.walkMin ?? null,
+        busMin: item.property.bus_to_gate_min ?? null,
+        options: optionTags(item.property),
+        address: item.property.address,
+        score: Math.round(item.score * 100),
+      }));
+
+      const res = await fetch("/api/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buildingName: bldName,
+          topProperties,
+          weightChanges: wc.slice(0, 8),
+          totalComparisons: compCount,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && data.explanation) {
+        setExplanation(data.explanation as Explanation);
+      } else {
+        setExplainError(data.error ?? "설명 생성 실패");
+      }
+    } catch (e) {
+      setExplainError(`요청 실패: ${String(e)}`);
+    } finally {
+      setExplainLoading(false);
+    }
+  }
 
   function handleCardClick(propertyId: string) {
     const found = ranked.find((r) => r.property.id === propertyId);
@@ -290,6 +356,100 @@ function ResultsContent() {
             </p>
           </motion.div>
         )}
+
+        {/* AI Explanation */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="mb-5 rounded-2xl border bg-gradient-to-br from-indigo-50 to-white p-4"
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600">
+              <Sparkles className="size-3.5" />
+              AI 분석
+            </p>
+            {!explainLoading && (
+              <button
+                onClick={() => {
+                  if (ranked.length > 0 && building) {
+                    fetchExplanation(ranked, building.name, weightComparison, ranked.length);
+                  }
+                }}
+                className="rounded-full p-1 text-gray-400 hover:bg-indigo-100 hover:text-indigo-600 transition"
+              >
+                <RefreshCw className="size-3.5" />
+              </button>
+            )}
+          </div>
+
+          {explainLoading && (
+            <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
+              <Loader2 className="size-4 animate-spin" />
+              분석 중...
+            </div>
+          )}
+
+          {explainError && (
+            <p className="text-xs text-red-400">{explainError}</p>
+          )}
+
+          {explanation && !explainLoading && (
+            <div className="space-y-3 text-sm text-gray-700">
+              {explanation.summary && (
+                <p className="font-semibold text-gray-900">{explanation.summary}</p>
+              )}
+
+              {explanation.whyTop1 && explanation.whyTop1.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-indigo-500">1위 선택 이유</p>
+                  <ul className="space-y-0.5 text-xs">
+                    {explanation.whyTop1.map((r, i) => (
+                      <li key={i} className="flex gap-1.5">
+                        <span className="mt-0.5 text-indigo-400">•</span>
+                        <span>{r}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {explanation.top1VsTop2 && explanation.top1VsTop2.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-indigo-500">1위 vs 2위 핵심 차이</p>
+                  <ul className="space-y-0.5 text-xs">
+                    {explanation.top1VsTop2.map((d, i) => (
+                      <li key={i} className="flex gap-1.5">
+                        <span className="mt-0.5 text-indigo-400">•</span>
+                        <span>{d}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {explanation.weightShift && explanation.weightShift.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-indigo-500">가중치 변화 해석</p>
+                  <ul className="space-y-0.5 text-xs">
+                    {explanation.weightShift.map((w, i) => (
+                      <li key={i} className="flex gap-1.5">
+                        <span className="mt-0.5 text-indigo-400">•</span>
+                        <span>{w}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {explanation.caveat && (
+                <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
+                  {explanation.caveat}
+                </p>
+              )}
+            </div>
+          )}
+        </motion.div>
 
         {/* Property list */}
         <motion.div
