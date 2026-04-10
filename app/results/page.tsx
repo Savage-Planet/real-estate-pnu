@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, RefreshCw } from "lucide-react";
@@ -61,6 +61,16 @@ function optionTags(p: Property): string[] {
   return tags;
 }
 
+function explainCacheKey(
+  sessionId: string,
+  buildingId: string,
+  topItems: ScoredProperty[],
+  compCount: number,
+): string {
+  const topIds = topItems.slice(0, 3).map((x) => x.property.id).join(",");
+  return `explain:${sessionId}:${buildingId}:${compCount}:${topIds}`;
+}
+
 function ResultsContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -92,6 +102,7 @@ function ResultsContent() {
   const [explanation, setExplanation] = useState<Explanation | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
+  const explainInflightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     async function init() {
@@ -194,6 +205,23 @@ function ResultsContent() {
     wc: Array<{ name: string; initial: number; final: number; delta: number }>,
     compCount: number,
   ) {
+    const cacheKey = explainCacheKey(sessionId, buildingId, topItems, compCount);
+    if (typeof window !== "undefined") {
+      const cached = window.sessionStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          setExplanation(JSON.parse(cached) as Explanation);
+          setExplainError(null);
+          return;
+        } catch {
+          // Ignore corrupted cache and continue with network request.
+        }
+      }
+    }
+
+    if (explainInflightRef.current.has(cacheKey)) return;
+    explainInflightRef.current.add(cacheKey);
+
     setExplainLoading(true);
     setExplainError(null);
     try {
@@ -224,13 +252,18 @@ function ResultsContent() {
       });
       const data = await res.json();
       if (data.ok && data.explanation) {
-        setExplanation(data.explanation as Explanation);
+        const parsed = data.explanation as Explanation;
+        setExplanation(parsed);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(cacheKey, JSON.stringify(parsed));
+        }
       } else {
         setExplainError(data.error ?? "설명 생성 실패");
       }
     } catch (e) {
       setExplainError(`요청 실패: ${String(e)}`);
     } finally {
+      explainInflightRef.current.delete(cacheKey);
       setExplainLoading(false);
     }
   }

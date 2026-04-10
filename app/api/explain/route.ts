@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
 const GEMINI_MODEL = "gemini-2.0-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
+const MAX_RETRIES = 2;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface PropertySummary {
   rank: number;
@@ -74,24 +79,45 @@ export async function POST(request: Request) {
   );
 
   try {
-    const res = await fetch(`${GEMINI_URL}${GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          { role: "user", parts: [{ text: `${SYSTEM_PROMPT}\n\n데이터:\n${userContent}` }] },
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1024,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
+    let res: Response | null = null;
+    let lastErrText = "";
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      res = await fetch(`${GEMINI_URL}${GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            { role: "user", parts: [{ text: `${SYSTEM_PROMPT}\n\n데이터:\n${userContent}` }] },
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 1024,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (res.ok) break;
+
+      lastErrText = await res.text();
+      if (res.status !== 429 || attempt >= MAX_RETRIES) break;
+      const retryAfter = Number(res.headers.get("retry-after") ?? 0);
+      const delayMs = retryAfter > 0 ? retryAfter * 1000 : 1200 * (attempt + 1);
+      await sleep(delayMs);
+    }
+
+    if (!res) {
+      return NextResponse.json({ error: "Gemini request not sent" }, { status: 502 });
+    }
 
     if (!res.ok) {
-      const errText = await res.text();
-      console.error("Gemini API error:", res.status, errText);
+      console.error("Gemini API error:", res.status, lastErrText);
+      if (res.status === 429) {
+        return NextResponse.json(
+          { error: "Gemini API 429: 잠시 후 다시 시도해 주세요." },
+          { status: 429 },
+        );
+      }
       return NextResponse.json(
         { error: `Gemini API ${res.status}` },
         { status: 502 },
