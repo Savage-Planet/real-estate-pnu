@@ -48,13 +48,13 @@ function norm(v: FeatureVector): number {
   return Math.sqrt(dot(v, v));
 }
 
-function normalizeToUnitBall(v: FeatureVector): FeatureVector {
+export function normalizeToUnitBall(v: FeatureVector): FeatureVector {
   const n = norm(v);
   if (n <= 1) return v;
   return v.map((x) => x / n);
 }
 
-function randn(): number {
+export function randn(): number {
   const u1 = Math.random();
   const u2 = Math.random();
   return Math.sqrt(-2 * Math.log(u1 || 1e-10)) * Math.cos(2 * Math.PI * u2);

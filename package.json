@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "import:street-lights": "node scripts/import-street-lights.mjs"
+    "import:street-lights": "node scripts/import-street-lights.mjs",
+    "sim:convergence": "tsx scripts/run-convergence-simulation.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
@@ -34,6 +35,7 @@
     "eslint-config-next": "16.2.2",
     "iconv-lite": "^0.7.2",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
