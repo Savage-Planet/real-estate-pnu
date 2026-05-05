@@ -401,6 +401,8 @@ function CompareContent() {
   // preferences 페이지에서 넘어온 사용자 서열 (Borda prior 초기화용)
   const rank1Param = params.get("rank1");
   const rank2Param = params.get("rank2");
+  // 사용자가 선택한 편의시설 타입 (콤마 구분)
+  const amenityTypesParam = params.get("amenityTypes") ?? "";
   const initialRanking: number[] = [
     ...(rank1Param !== null ? [Number(rank1Param)] : []),
     ...(rank2Param !== null ? [Number(rank2Param)] : []),
@@ -422,9 +424,21 @@ function CompareContent() {
   const [enrichLoading, setEnrichLoading] = useState(false);
 
   const resultsUrl = useCallback(
-    (topIds: string[], category: string) =>
-      `/results?session=${sessionId}&building=${buildingId}&minRent=${minRent}&maxRent=${maxRent}&minDeposit=${minDeposit}&maxDeposit=${maxDeposit}&topIds=${encodeURIComponent(topIds.join(","))}&category=${encodeURIComponent(category)}`,
-    [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit],
+    (topIds: string[], category: string) => {
+      const p = new URLSearchParams({
+        session: sessionId,
+        building: buildingId,
+        minRent: String(minRent),
+        maxRent: String(maxRent),
+        minDeposit: String(minDeposit),
+        maxDeposit: String(maxDeposit),
+        topIds: topIds.join(","),
+        category,
+      });
+      if (amenityTypesParam) p.set("amenityTypes", amenityTypesParam);
+      return `/results?${p.toString()}`;
+    },
+    [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, amenityTypesParam],
   );
 
   // ── 초기 데이터 로드 ──

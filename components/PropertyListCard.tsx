@@ -2,12 +2,14 @@
 
 import { MapPin, Home, Clock } from "lucide-react";
 import type { Property } from "@/types";
+import type { NearestAmenity } from "@/lib/amenities";
 
 interface PropertyListCardProps {
   property: Property;
   rank: number;
   score: number;
   walkMin?: number;
+  nearestAmenities?: NearestAmenity[];
   onClick?: () => void;
 }
 
@@ -16,6 +18,7 @@ export default function PropertyListCard({
   rank,
   score,
   walkMin,
+  nearestAmenities,
   onClick,
 }: PropertyListCardProps) {
   return (
@@ -54,6 +57,22 @@ export default function PropertyListCard({
             </span>
           )}
         </div>
+        {nearestAmenities && nearestAmenities.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1">
+            {nearestAmenities.slice(0, 3).map((na) => (
+              <span
+                key={na.type}
+                className="flex items-center gap-0.5 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700"
+              >
+                <span>{na.icon}</span>
+                {na.label}{" "}
+                {na.distM >= 1000
+                  ? `${(na.distM / 1000).toFixed(1)}km`
+                  : `${na.distM}m`}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 flex-col items-end justify-center">

@@ -7,6 +7,7 @@ import { ArrowRight, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { supabase } from "@/lib/supabase";
+import { AMENITY_TYPES } from "@/lib/amenities";
 
 const MIN_RENT = 10;
 const MAX_RENT = 100;
@@ -21,8 +22,18 @@ function FilterContent() {
 
   const [rentRange, setRentRange] = useState<[number, number]>([30, 50]);
   const [depositRange, setDepositRange] = useState<[number, number]>([MIN_DEPOSIT, MAX_DEPOSIT]);
+  const [selectedAmenities, setSelectedAmenities] = useState<Set<string>>(new Set());
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const toggleAmenity = (type: string) => {
+    setSelectedAmenities((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
 
   const fetchCount = useCallback(
     async (minR: number, maxR: number, minD: number, maxD: number) => {
@@ -61,6 +72,9 @@ function FilterContent() {
       minDeposit: String(depositRange[0]),
       maxDeposit: String(depositRange[1]),
     });
+    if (selectedAmenities.size > 0) {
+      params.set("amenityTypes", Array.from(selectedAmenities).join(","));
+    }
     router.push(`/preferences?${params.toString()}`);
   };
 
@@ -137,6 +151,43 @@ function FilterContent() {
             <span>{MIN_DEPOSIT}만원</span>
             <span>{MAX_DEPOSIT.toLocaleString()}만원</span>
           </div>
+        </motion.div>
+
+        {/* 편의시설 복수선택 */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.25 }}
+          className="flex flex-col gap-3 rounded-2xl border bg-card p-5"
+        >
+          <div>
+            <p className="text-sm font-semibold">근처 편의시설 <span className="text-xs font-normal text-muted-foreground">(복수선택 가능)</span></p>
+            <p className="mt-0.5 text-xs text-muted-foreground">선택하면 매물 추천 점수와 지도에 반영됩니다</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {AMENITY_TYPES.map((a) => {
+              const active = selectedAmenities.has(a.type);
+              return (
+                <button
+                  key={a.type}
+                  onClick={() => toggleAmenity(a.type)}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                    active
+                      ? "border-blue-400 bg-blue-50 text-blue-700"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-blue-200"
+                  }`}
+                >
+                  <span>{a.icon}</span>
+                  {a.label}
+                </button>
+              );
+            })}
+          </div>
+          {selectedAmenities.size > 0 && (
+            <p className="text-xs text-blue-600">
+              {selectedAmenities.size}개 선택됨 · 결과에서 가장 가까운 거리를 표시합니다
+            </p>
+          )}
         </motion.div>
 
         <motion.div

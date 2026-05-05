@@ -212,6 +212,10 @@ export class InteractiveNavigator {
   private currentMicroA: Property | null = null;
   private currentMicroB: Property | null = null;
   private usedRealPairKeys = new Set<string>();
+  /** 각 매물이 비교에 등장한 횟수 */
+  private propertyAppearCount = new Map<string, number>();
+  /** 같은 위치(lat/lng 소수점 4자리)로 묶인 대표 매물 ID 집합 */
+  private locationRepIds = new Set<string>();
 
   // ── 진행 단계 ──
   private phase: "macro" | "micro" | "done" = "macro";
@@ -360,9 +364,20 @@ export class InteractiveNavigator {
     this.selectedGroupKey = GROUP_KEYS[top1Idx];
     this.secondGroupKey = GROUP_KEYS[top2Idx];
 
-    // Sub-vector 캐시 초기화
+    // 위치 중복 제거: lat/lng 소수점 4자리로 그룹핑, 각 그룹에서 1개만 비교에 사용
+    const locationMap = new Map<string, Property>();
+    for (const p of this.properties) {
+      const key = `${p.lat.toFixed(4)}_${p.lng.toFixed(4)}`;
+      if (!locationMap.has(key)) {
+        locationMap.set(key, p);
+      }
+    }
+    this.locationRepIds = new Set(Array.from(locationMap.values()).map((p) => p.id));
+
+    // Sub-vector 캐시 초기화 (대표 매물만)
     this.subVecCache.clear();
     for (const p of this.properties) {
+      if (!this.locationRepIds.has(p.id)) continue;
       const fv = this.fvCache.get(p.id);
       if (fv) {
         this.subVecCache.set(p.id, extractSubVector(fv, this.selectedGroupKey));
@@ -370,6 +385,7 @@ export class InteractiveNavigator {
     }
 
     this.microPosterior = createMicroPosterior(this.selectedGroupKey);
+    this.propertyAppearCount.clear();
     this.pickNextMicroPair();
   }
 
@@ -408,26 +424,35 @@ export class InteractiveNavigator {
       return 1 / (1 + Math.exp(-x));
     }
 
-    let bestPair: [Property, Property] | null = null;
-    let minAmb = Infinity;
+    // 대표 매물 목록(위치 중복 제거된)
+    const pool = this.properties.filter((p) => this.locationRepIds.has(p.id));
 
-    for (let i = 0; i < this.properties.length; i++) {
-      for (let j = i + 1; j < this.properties.length; j++) {
-        const pairKey = `${this.properties[i].id}__${this.properties[j].id}`;
+    let bestPair: [Property, Property] | null = null;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < pool.length; i++) {
+      for (let j = i + 1; j < pool.length; j++) {
+        const pairKey = `${pool[i].id}__${pool[j].id}`;
         if (this.usedRealPairKeys.has(pairKey)) continue;
 
-        const sA = this.subVecCache.get(this.properties[i].id);
-        const sB = this.subVecCache.get(this.properties[j].id);
+        const sA = this.subVecCache.get(pool[i].id);
+        const sB = this.subVecCache.get(pool[j].id);
         if (!sA || !sB) continue;
 
         const delta = sA.map((v, k) => v - sB[k]);
         const logit = 2.5 * dot(mean, delta);
         const pAB = sigmoid(logit);
-        const amb = Math.abs(pAB - 0.5);
+        // 불확실도가 높을수록(0.5에 가까울수록) 좋음, 자주 등장한 매물 페널티
+        const ambiguity = 0.5 - Math.abs(pAB - 0.5);
+        const countPenalty =
+          ((this.propertyAppearCount.get(pool[i].id) ?? 0) +
+            (this.propertyAppearCount.get(pool[j].id) ?? 0)) *
+          0.05;
+        const score = ambiguity - countPenalty;
 
-        if (amb < minAmb) {
-          minAmb = amb;
-          bestPair = [this.properties[i], this.properties[j]];
+        if (score > bestScore) {
+          bestScore = score;
+          bestPair = [pool[i], pool[j]];
         }
       }
     }
@@ -438,6 +463,14 @@ export class InteractiveNavigator {
     }
 
     this.usedRealPairKeys.add(`${bestPair[0].id}__${bestPair[1].id}`);
+    this.propertyAppearCount.set(
+      bestPair[0].id,
+      (this.propertyAppearCount.get(bestPair[0].id) ?? 0) + 1,
+    );
+    this.propertyAppearCount.set(
+      bestPair[1].id,
+      (this.propertyAppearCount.get(bestPair[1].id) ?? 0) + 1,
+    );
     this.currentMicroA = bestPair[0];
     this.currentMicroB = bestPair[1];
   }

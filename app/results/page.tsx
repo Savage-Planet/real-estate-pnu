@@ -27,7 +27,13 @@ import { computeRoundMetrics, type RoundMetrics } from "@/lib/convergence";
 import { getMaxExpectedVolumeRemoval } from "@/lib/query-selector";
 import { posteriorConcentration } from "@/lib/reward-model";
 import ConvergenceChart from "@/components/ConvergenceChart";
-import type { Property, Comparison, Building } from "@/types";
+import type { Property, Comparison, Building, Amenity } from "@/types";
+import {
+  loadAmenitiesByTypes,
+  calcNearestAmenities,
+  calcAmenityProximityScore,
+  type NearestAmenity,
+} from "@/lib/amenities";
 
 const PAGE_SIZE = 10;
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
@@ -36,6 +42,7 @@ interface ScoredProperty {
   property: Property;
   score: number;
   walkMin?: number;
+  nearestAmenities?: NearestAmenity[];
 }
 
 function priceLabel(p: Property): string {
@@ -90,6 +97,9 @@ function ResultsContent() {
   /** v2 선택 카테고리 레이블 */
   const categoryParam = params.get("category");
   const isV2 = Boolean(topIdsParam);
+  /** 선택된 편의시설 타입 목록 */
+  const amenityTypesParam = params.get("amenityTypes") ?? "";
+  const amenityTypes = amenityTypesParam ? amenityTypesParam.split(",").filter(Boolean) : [];
 
   const [ranked, setRanked] = useState<ScoredProperty[]>([]);
   const [building, setBuilding] = useState<Building | null>(null);
@@ -213,10 +223,19 @@ function ResultsContent() {
         scored.sort((a, b) => b.score - a.score);
       }
 
-      const minScore = scored[scored.length - 1]?.score ?? 0;
-      const maxScore = scored[0]?.score ?? 1;
+      // 같은 위치(lat/lng 소수점 4자리) 중복 매물 제거: 순위가 높은 것만 유지
+      const seenLocations = new Set<string>();
+      const deduped = scored.filter((s) => {
+        const locKey = `${s.property.lat.toFixed(4)}_${s.property.lng.toFixed(4)}`;
+        if (seenLocations.has(locKey)) return false;
+        seenLocations.add(locKey);
+        return true;
+      });
+
+      const minScore = deduped[deduped.length - 1]?.score ?? 0;
+      const maxScore = deduped[0]?.score ?? 1;
       const range = maxScore - minScore || 1;
-      const normalized = scored.map((s) => ({
+      const normalized = deduped.map((s) => ({
         ...s,
         score: isV2 ? s.score : (s.score - minScore) / range,
       }));
@@ -226,6 +245,26 @@ function ResultsContent() {
       );
       for (let i = 0; i < normalized.length; i++) {
         if (walkResults[i]) normalized[i].walkMin = walkResults[i]!.totalWalkMin;
+      }
+
+      // 편의시설 로딩 및 점수 반영
+      if (amenityTypes.length > 0) {
+        const amenities = await loadAmenitiesByTypes(amenityTypes);
+        if (amenities.length > 0) {
+          const nearestMap = calcNearestAmenities(
+            normalized.map((s) => s.property),
+            amenities,
+          );
+          const AMENITY_WEIGHT = 0.15; // 15% 가중치
+          for (const item of normalized) {
+            const nearest = nearestMap.get(item.property.id) ?? [];
+            item.nearestAmenities = nearest;
+            const amenityScore = calcAmenityProximityScore(nearest);
+            item.score = item.score * (1 - AMENITY_WEIGHT) + amenityScore * AMENITY_WEIGHT;
+          }
+          // 편의시설 반영 후 재정렬
+          normalized.sort((a, b) => b.score - a.score);
+        }
       }
 
       setRanked(normalized);
@@ -337,8 +376,26 @@ function ResultsContent() {
     if (building) {
       markers.push({ lat: building.lat, lng: building.lng, label: building.name, color: "star" });
     }
+    // 선택된 편의시설 최근접 위치 마커 (light = 노란 점)
+    if (amenityTypes.length > 0) {
+      const seenAmenityPos = new Set<string>();
+      for (const item of pageItems) {
+        for (const na of item.nearestAmenities ?? []) {
+          const posKey = `${na.lat.toFixed(5)}_${na.lng.toFixed(5)}`;
+          if (seenAmenityPos.has(posKey)) continue;
+          seenAmenityPos.add(posKey);
+          markers.push({
+            lat: na.lat,
+            lng: na.lng,
+            label: `${na.icon}${na.label}`,
+            color: "light",
+            excludeFromBounds: true,
+          });
+        }
+      }
+    }
     return markers;
-  }, [pageItems, building, page]);
+  }, [pageItems, building, page, amenityTypes]);
 
   if (loading) {
     return (
@@ -574,6 +631,7 @@ function ResultsContent() {
               rank={page * PAGE_SIZE + i + 1}
               score={item.score}
               walkMin={item.walkMin}
+              nearestAmenities={item.nearestAmenities}
               onClick={() => handleCardClick(item.property.id)}
             />
           ))}
