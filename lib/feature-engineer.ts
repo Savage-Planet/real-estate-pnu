@@ -4,7 +4,7 @@ import { calcCommuteForStats } from "./transit-calculator";
 
 export type FeatureVector = number[];
 
-export const FEATURE_DIM = 15;
+export const FEATURE_DIM = 20;
 
 /**
  * 학습용 통학 특징. 도보·버스 총시간은 DB 기준(computeStatsWithCommute).
@@ -162,8 +162,14 @@ function optionsScore(p: Property): number {
   let count = 0;
   if (p.has_closet) count++;
   if (p.has_builtin_closet) count++;
-  if (p.has_entrance_security) count++;
-  return count / 3;
+  return count / 2;
+}
+
+/** 완만할수록 ↑. null → 0.5 (미백필 중립). 고정 범위 [0, 20%] */
+function slopeFeatureValue(slope: number | null | undefined): number {
+  if (slope == null || !Number.isFinite(slope)) return 0.5;
+  const clamped = Math.min(Math.max(slope, 0), 20);
+  return 1 - clamped / 20;
 }
 
 export function toFeatureVector(
@@ -190,6 +196,13 @@ export function toFeatureVector(
     normalize(property.noise_level ?? 50, stats.noiseLevel.min, stats.noiseLevel.max),
     walkF,
     busF,
+    // 안전 보안 dim (idx 15-18)
+    property.has_entrance_security ? 1 : 0,
+    property.has_intercom ? 1 : 0,
+    property.has_security_guard ? 1 : 0,
+    property.has_card_key ? 1 : 0,
+    // 거리 경사도 dim (idx 19) — 완만할수록 ↑
+    slopeFeatureValue(property.walk_slope_avg),
   ];
 }
 
@@ -200,6 +213,8 @@ export const FEATURE_NAMES = [
   "소음",
   "통학(도보)",
   "통학(버스 총시간)",
+  "방범창", "인터폰", "경비원", "카드키",
+  "경사도",
 ];
 
 export function getMeanWeightLabels(

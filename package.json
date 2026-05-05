@@ -8,7 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "import:street-lights": "node scripts/import-street-lights.mjs",
-    "sim": "tsx scripts/run-convergence-simulation.ts"
+    "sim": "tsx scripts/run-convergence-simulation.ts",
+    "sim:batch": "tsx scripts/run-batch-simulation.ts",
+    "sim:hierarchical": "tsx scripts/run-hierarchical-simulation.ts",
+    "sim:hierarchical-v2": "tsx scripts/run-hierarchical-v2-simulation.ts",
+    "sim:hierarchical-v2-batch": "tsx scripts/run-hierarchical-v2-batch.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

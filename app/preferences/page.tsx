@@ -3,229 +3,258 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 
-interface WeightItem {
-  key: string;
-  label: string;
-  description: string;
-  defaultValue: number;
-  group: string;
-  footerLeft?: string;
-  footerRight?: string;
-}
+// ──────────────────────────────────────────────────────────
+// 카테고리 정의
+// ──────────────────────────────────────────────────────────
 
-const GROUPS = [
-  { id: "cost", label: "비용", emoji: "💰" },
-  { id: "space", label: "공간", emoji: "🏠" },
-  { id: "facility", label: "편의시설", emoji: "🔧" },
-  { id: "environment", label: "환경", emoji: "🌿" },
-  { id: "commute", label: "통학", emoji: "🚶" },
-];
-
-const WEIGHT_ITEMS: WeightItem[] = [
-  { key: "monthlyRent", label: "월세", description: "낮을수록 좋다", defaultValue: 80, group: "cost" },
-  { key: "deposit", label: "보증금", description: "낮을수록 좋다", defaultValue: 60, group: "cost" },
-  { key: "maintenanceFee", label: "관리비", description: "낮을수록 좋다", defaultValue: 60, group: "cost" },
-  { key: "area", label: "크기", description: "클수록 좋다", defaultValue: 30, group: "space" },
-  { key: "rooms", label: "방 개수", description: "많을수록 좋다", defaultValue: 30, group: "space" },
-  { key: "directionSouth", label: "남향 선호", description: "높을수록 남향 선호", defaultValue: 50, group: "facility" },
-  { key: "parking", label: "주차", description: "있으면 좋다", defaultValue: 20, group: "facility" },
-  { key: "cctv", label: "CCTV", description: "있으면 좋다", defaultValue: 50, group: "facility" },
-  { key: "elevator", label: "엘리베이터", description: "있으면 좋다", defaultValue: 30, group: "facility" },
-  { key: "year", label: "년식(신축)", description: "최신일수록 좋다", defaultValue: 50, group: "facility" },
-  { key: "options", label: "기타옵션", description: "많을수록 좋다", defaultValue: 30, group: "facility" },
-  { key: "noise", label: "소음", description: "낮을수록 좋다", defaultValue: 50, group: "environment" },
-  { key: "commute", label: "통학·도보", description: "캠퍼스까지 짧을수록 좋다", defaultValue: 55, group: "commute" },
+const CATEGORIES = [
   {
-    key: "busAvailable",
-    label: "버스 통학",
-    description: "버스 소요시간 짧을수록 좋다",
-    defaultValue: 45,
-    group: "commute",
-    footerLeft: "안중요",
-    footerRight: "중요",
+    idx: 0,
+    icon: "🚶",
+    label: "거리",
+    desc: "캠퍼스까지 통학 거리",
+    examples: "도보 5분, 경사 완만",
+  },
+  {
+    idx: 1,
+    icon: "💰",
+    label: "가격",
+    desc: "월세 · 보증금 · 관리비",
+    examples: "저렴한 월세, 낮은 관리비",
+  },
+  {
+    idx: 2,
+    icon: "🔒",
+    label: "안전",
+    desc: "보안 시설 · 소음",
+    examples: "CCTV, 방범창, 인터폰",
+  },
+  {
+    idx: 3,
+    icon: "✨",
+    label: "편의성",
+    desc: "공간 · 시설 · 년식",
+    examples: "신축, 넓은 방, 엘리베이터",
   },
 ];
+
+// ──────────────────────────────────────────────────────────
+// 컴포넌트
+// ──────────────────────────────────────────────────────────
 
 function PreferencesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [step, setStep] = useState<1 | 2>(1);
-  const [selected, setSelected] = useState<Set<string>>(() => {
-    const s = new Set<string>();
-    for (const item of WEIGHT_ITEMS) {
-      if (item.defaultValue >= 40) s.add(item.key);
-    }
-    return s;
-  });
-  const [weights, setWeights] = useState<Record<string, number>>(() => {
-    const init: Record<string, number> = {};
-    for (const item of WEIGHT_ITEMS) init[item.key] = item.defaultValue;
-    return init;
-  });
+  // step: 0 = 안내, 1 = 1순위 선택, 2 = 2순위 선택
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [rank1, setRank1] = useState<number | null>(null);
+  const [rank2, setRank2] = useState<number | null>(null);
 
-  const toggleItem = (key: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+  const remaining = CATEGORIES.filter((c) => c.idx !== rank1);
 
   const handleStart = () => {
-    const final: Record<string, number> = {};
-    for (const item of WEIGHT_ITEMS) {
-      final[item.key] = selected.has(item.key) ? weights[item.key] : 0;
-    }
     const p = new URLSearchParams(searchParams.toString());
-    p.set("weights", JSON.stringify(final));
+    if (rank1 !== null) p.set("rank1", String(rank1));
+    if (rank2 !== null) p.set("rank2", String(rank2));
     router.push(`/compare?${p.toString()}`);
   };
 
-  const selectedItems = WEIGHT_ITEMS.filter((i) => selected.has(i.key));
+  const handleBack = () => {
+    if (step === 2) {
+      setRank2(null);
+      setStep(1);
+    } else if (step === 1) {
+      setRank1(null);
+      setStep(0);
+    } else {
+      router.back();
+    }
+  };
 
   return (
     <main className="flex min-h-dvh flex-col px-6 py-10">
       <div className="mx-auto flex w-full max-w-md flex-col gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-        >
-          <p className="text-sm font-medium text-muted-foreground">3 / 4 단계</p>
-          <h1 className="mt-1 text-xl font-bold tracking-tight">
-            {step === 1
-              ? "중요하게 보는 요소를 선택하세요"
-              : "선택한 요소의 중요도를 조절하세요"}
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {step === 1
-              ? "관심 없는 항목은 해제하면 됩니다"
-              : "슬라이더를 움직여 중요도를 설정하세요"}
-          </p>
-        </motion.div>
+
+        {/* 헤더 */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBack}
+            className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600"
+          >
+            <ArrowLeft className="size-4" />
+            뒤로
+          </button>
+        </div>
 
         <AnimatePresence mode="wait">
-          {step === 1 ? (
+
+          {/* ── 안내 화면 ── */}
+          {step === 0 && (
             <motion.div
-              key="step1"
+              key="intro"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.25 }}
-              className="flex flex-col gap-5 rounded-2xl border bg-card p-5"
+              transition={{ duration: 0.2 }}
+              className="flex flex-col gap-6"
             >
-              {GROUPS.map((group) => {
-                const items = WEIGHT_ITEMS.filter((i) => i.group === group.id);
-                return (
-                  <div key={group.id}>
-                    <p className="mb-2 text-xs font-semibold text-gray-500">
-                      {group.emoji} {group.label}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {items.map((item) => {
-                        const active = selected.has(item.key);
-                        return (
-                          <button
-                            key={item.key}
-                            onClick={() => toggleItem(item.key)}
-                            className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                              active
-                                ? "border-blue-300 bg-blue-50 text-blue-700"
-                                : "border-gray-200 bg-gray-50 text-gray-400"
-                            }`}
-                          >
-                            {active && <Check className="size-3.5" />}
-                            {item.label}
-                          </button>
-                        );
-                      })}
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">3 / 4 단계</p>
+                <h1 className="mt-1 text-xl font-bold tracking-tight">
+                  AI가 선호도를 직접 학습합니다
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  먼저 중요한 항목 순서를 알려주시면 더 빠르게 학습해요
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-2xl border bg-card p-5">
+                {[
+                  { icon: "🎯", title: "1·2순위 선택", desc: "가장 중요한 것 2가지를 선택합니다 (선택 후 변경 가능)" },
+                  { icon: "🔍", title: "AI 선호도 파악", desc: "가상 매물 비교로 세부 선호를 학습합니다" },
+                  { icon: "🏠", title: "실 매물 추천", desc: "맞춤 매물 순위를 제공합니다" },
+                ].map((s) => (
+                  <div key={s.title} className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-lg">
+                      {s.icon}
                     </div>
-                  </div>
-                );
-              })}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="step2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.25 }}
-            >
-              <button
-                onClick={() => setStep(1)}
-                className="mb-3 flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600"
-              >
-                <ArrowLeft className="size-4" />
-                요소 다시 선택
-              </button>
-              <div className="flex flex-col gap-5 rounded-2xl border bg-card p-5">
-                {selectedItems.map((item) => (
-                  <div key={item.key}>
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-semibold">{item.label}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {item.description}
-                        </span>
-                      </div>
-                      <span className="text-sm font-bold tabular-nums text-primary">
-                        {weights[item.key]}
-                      </span>
-                    </div>
-                    <Slider
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={[weights[item.key]]}
-                      onValueChange={(v) =>
-                        setWeights((prev) => ({ ...prev, [item.key]: v[0] }))
-                      }
-                    />
-                    <div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground">
-                      <span>{item.footerLeft ?? "관심없음"}</span>
-                      <span>{item.footerRight ?? "매우 중요"}</span>
+                    <div>
+                      <p className="text-sm font-semibold">{s.title}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{s.desc}</p>
                     </div>
                   </div>
                 ))}
               </div>
+
+              <Button
+                size="lg"
+                className="w-full h-14 text-base font-semibold rounded-2xl gap-2"
+                onClick={() => setStep(1)}
+              >
+                순위 선택하기
+                <ArrowRight className="size-5" />
+              </Button>
             </motion.div>
           )}
-        </AnimatePresence>
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="pt-2"
-        >
-          {step === 1 ? (
-            <Button
-              size="lg"
-              className="w-full h-14 text-base font-semibold rounded-2xl gap-2"
-              onClick={() => setStep(2)}
-              disabled={selected.size === 0}
+          {/* ── 1순위 선택 ── */}
+          {step === 1 && (
+            <motion.div
+              key="rank1"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col gap-4"
             >
-              다음: 가중치 조절 ({selected.size}개 선택)
-              <ArrowRight className="size-5" />
-            </Button>
-          ) : (
-            <Button
-              size="lg"
-              className="w-full h-14 text-base font-semibold rounded-2xl gap-2"
-              onClick={handleStart}
-            >
-              매물 비교 시작
-              <ArrowRight className="size-5" />
-            </Button>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">3 / 4 단계 · 1순위</p>
+                <h1 className="mt-1 text-xl font-bold tracking-tight">
+                  가장 중요한 것은 무엇인가요?
+                </h1>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {CATEGORIES.map((cat) => (
+                  <motion.button
+                    key={cat.idx}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setRank1(cat.idx);
+                      setRank2(null);
+                      setStep(2);
+                    }}
+                    className="flex items-center gap-4 rounded-2xl border bg-card p-4 text-left hover:border-blue-300 hover:shadow-sm transition"
+                  >
+                    <span className="text-2xl">{cat.icon}</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold">{cat.label}</p>
+                      <p className="text-xs text-muted-foreground">{cat.desc}</p>
+                      <p className="mt-0.5 text-[11px] text-gray-400">{cat.examples}</p>
+                    </div>
+                    <ArrowRight className="size-4 text-gray-300" />
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
           )}
-        </motion.div>
+
+          {/* ── 2순위 선택 ── */}
+          {step === 2 && rank1 !== null && (
+            <motion.div
+              key="rank2"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col gap-4"
+            >
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">3 / 4 단계 · 2순위</p>
+                <h1 className="mt-1 text-xl font-bold tracking-tight">
+                  그 다음으로 중요한 것은요?
+                </h1>
+                <div className="mt-2 flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-2">
+                  <Check className="size-3.5 text-blue-500" />
+                  <p className="text-xs text-blue-700">
+                    1순위: <strong>{CATEGORIES[rank1].icon} {CATEGORIES[rank1].label}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {remaining.map((cat) => (
+                  <motion.button
+                    key={cat.idx}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setRank2(cat.idx)}
+                    className={`flex items-center gap-4 rounded-2xl border p-4 text-left transition ${
+                      rank2 === cat.idx
+                        ? "border-blue-400 bg-blue-50 shadow-sm"
+                        : "bg-card hover:border-blue-200 hover:shadow-sm"
+                    }`}
+                  >
+                    <span className="text-2xl">{cat.icon}</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold">{cat.label}</p>
+                      <p className="text-xs text-muted-foreground">{cat.desc}</p>
+                      <p className="mt-0.5 text-[11px] text-gray-400">{cat.examples}</p>
+                    </div>
+                    {rank2 === cat.idx
+                      ? <Check className="size-4 text-blue-500" />
+                      : <ArrowRight className="size-4 text-gray-300" />
+                    }
+                  </motion.button>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="flex-1 h-12 rounded-2xl"
+                  onClick={handleStart}
+                >
+                  건너뛰기
+                </Button>
+                <Button
+                  size="lg"
+                  className="flex-1 h-12 rounded-2xl gap-1.5"
+                  disabled={rank2 === null}
+                  onClick={handleStart}
+                >
+                  비교 시작
+                  <ArrowRight className="size-4" />
+                </Button>
+              </div>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
       </div>
     </main>
   );

@@ -4,46 +4,33 @@ import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import KakaoMap, { type KakaoMapMarker, type KakaoMapPolyline } from "@/components/KakaoMap";
-import ProgressBar from "@/components/ProgressBar";
 import { Button } from "@/components/ui/button";
-import { X, GitCompareArrows, Route } from "lucide-react";
+import { X, GitCompareArrows, Route, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { calcTransitForDisplay, type TransitResult } from "@/lib/transit-calculator";
 import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
 import {
   computeStatsWithCommute,
-  mergeCommuteFeatures,
-  toFeatureVector,
   type CommuteFeatures,
   type FeatureStats,
 } from "@/lib/feature-engineer";
-import { createModel, updateModel, type RewardModel } from "@/lib/reward-model";
-import { selectPair } from "@/lib/query-selector";
-import { createConvergenceState, checkConvergence, type ConvergenceState } from "@/lib/convergence";
 import type { Property, Building, StreetLight } from "@/types";
+import { formatCompareError, logCompare, logCompareError, withTimeout } from "@/lib/compare-log";
 import {
-  formatCompareError,
-  logCompare,
-  logCompareError,
-  withTimeout,
-} from "@/lib/compare-log";
+  InteractiveNavigator,
+  type NavigatorStep,
+  type MacroStep,
+  type MicroStep,
+} from "@/lib/hierarchical/v2/interactive-navigator";
+import { CATEGORY_NAMES } from "@/lib/hierarchical/v2/feature-groups";
 
-const MIN_ROUNDS = 5;
-const MAX_ROUNDS = 25;
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
 const ENRICH_TRANSIT_TIMEOUT_MS = 60_000;
 const ENRICH_LIGHTS_TIMEOUT_MS = 45_000;
 
-interface PairState {
-  a: Property;
-  b: Property;
-  transitA?: TransitResult;
-  transitB?: TransitResult;
-  lightsA?: StreetLight[];
-  lightsB?: StreetLight[];
-  densityA?: number;
-  densityB?: number;
-}
+// ──────────────────────────────────────────────────────────
+// 유틸
+// ──────────────────────────────────────────────────────────
 
 function priceLabel(p: Property): string {
   if (p.trade_type === "전세") return `전세 ${p.deposit.toLocaleString()}만`;
@@ -52,14 +39,6 @@ function priceLabel(p: Property): string {
 
 function pyeong(area: number): string {
   return `실${(area / 3.3058).toFixed(1)}평`;
-}
-
-function buildYearLabel(p: Property): string {
-  if (p.within_4y) return "4년 이내";
-  if (p.within_10y) return "10년 이내";
-  if (p.within_15y) return "15년 이내";
-  if (p.within_25y) return "25년 이내";
-  return "25년 초과";
 }
 
 function betterLower(a: number, b: number): "a" | "b" | null {
@@ -73,409 +52,174 @@ function betterHigher(a: number, b: number): "a" | "b" | null {
   return null;
 }
 
-function CompareContent() {
-  const router = useRouter();
-  const params = useSearchParams();
-  const buildingId = params.get("building") ?? "";
-  const minRent = Number(params.get("minRent") ?? 10);
-  const maxRent = Number(params.get("maxRent") ?? 100);
-  const minDeposit = Number(params.get("minDeposit") ?? 0);
-  const maxDeposit = Number(params.get("maxDeposit") ?? 50000);
-  const weightsParam = params.get("weights");
+// ──────────────────────────────────────────────────────────
+// Macro 단계 UI (가상 아이템 비교)
+// ──────────────────────────────────────────────────────────
 
-  const [building, setBuilding] = useState<Building | null>(null);
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [pair, setPair] = useState<PairState | null>(null);
-  const [round, setRound] = useState(0);
-  const [convergenceScore, setConvergenceScore] = useState(0);
-  const [sessionId] = useState(() => crypto.randomUUID());
-  const [loading, setLoading] = useState(true);
-  const [convergePrompt, setConvergePrompt] = useState<string | null>(null);
-  const [initError, setInitError] = useState<string | null>(null);
-  const [initWarning, setInitWarning] = useState<string | null>(null);
-  const [pairLoadError, setPairLoadError] = useState<string | null>(null);
+function MacroCompareView({
+  step,
+  onAnswer,
+}: {
+  step: MacroStep;
+  onAnswer: (w: "a" | "b") => void;
+}) {
+  return (
+    <main className="flex min-h-dvh flex-col items-center justify-between px-4 py-6">
+      {/* 헤더 */}
+      <div className="w-full max-w-md">
+        <div className="mb-1 flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">
+            선호도 파악 중 · {step.round + 1}단계
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {CATEGORY_NAMES.join(" · ")}
+          </p>
+        </div>
+        {/* 진행 바 */}
+        <div className="h-1.5 w-full rounded-full bg-gray-100">
+          <motion.div
+            className="h-full rounded-full bg-blue-500"
+            initial={{ width: 0 }}
+            animate={{ width: `${step.macroProgress * 100}%` }}
+            transition={{ duration: 0.4 }}
+          />
+        </div>
+        <p className="mt-3 text-center text-base font-semibold">
+          어떤 매물이 더 마음에 드세요?
+        </p>
+        <p className="mt-0.5 text-center text-xs text-muted-foreground">
+          실제 매물이 아닌 선호 유형 파악을 위한 질문입니다
+        </p>
+      </div>
 
-  const [showCompareModal, setShowCompareModal] = useState(false);
+      {/* 카드 */}
+      <div className="flex w-full max-w-md flex-col gap-3 sm:flex-row">
+        {(["a", "b"] as const).map((side) => {
+          const item = side === "a" ? step.itemA : step.itemB;
+          const color = side === "a" ? "red" : "blue";
+          return (
+            <motion.button
+              key={side}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => onAnswer(side)}
+              className={`flex flex-1 flex-col items-center gap-3 rounded-2xl border-2 p-5 text-left transition hover:border-${color}-400 hover:shadow-md`}
+            >
+              <div className="text-4xl">{item.icon}</div>
+              <div>
+                <p className="text-sm font-bold">{item.title}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{item.desc}</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {item.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+              <Button
+                size="sm"
+                className={`w-full ${color === "red" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"} text-white`}
+              >
+                {side === "a" ? "A" : "B"} 선택
+              </Button>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      <div className="h-4" />
+    </main>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
+// Micro 단계 UI (실제 매물 비교)
+// ──────────────────────────────────────────────────────────
+
+interface PairEnrichState {
+  transitA?: TransitResult;
+  transitB?: TransitResult;
+  lightsA?: StreetLight[];
+  lightsB?: StreetLight[];
+  densityA?: number;
+  densityB?: number;
+}
+
+function buildYearLabel(p: Property): string {
+  if (p.within_4y) return "4년 이내";
+  if (p.within_10y) return "10년 이내";
+  if (p.within_15y) return "15년 이내";
+  if (p.within_25y) return "25년 이내";
+  return "25년 초과";
+}
+
+function MicroCompareView({
+  step,
+  enrichState,
+  building,
+  onAnswer,
+}: {
+  step: MicroStep;
+  enrichState: PairEnrichState;
+  building: Building | null;
+  onAnswer: (w: "a" | "b") => void;
+}) {
+  const [showModal, setShowModal] = useState(false);
   const [showRoutes, setShowRoutes] = useState(false);
 
-  const modelRef = useRef<RewardModel | null>(null);
-  const statsRef = useRef<FeatureStats | null>(null);
-  const commuteByIdRef = useRef<Map<string, CommuteFeatures> | null>(null);
-  const convRef = useRef<ConvergenceState>(createConvergenceState());
-  const usedPairsRef = useRef<Set<string>>(new Set());
-  const peakScoreRef = useRef(0);
+  const { propertyA: pA, propertyB: pB } = step;
+  const { transitA, transitB, densityA, densityB } = enrichState;
 
-  const resultsUrl = useCallback(
-    () =>
-      `/results?session=${sessionId}&building=${buildingId}&minRent=${minRent}&maxRent=${maxRent}&minDeposit=${minDeposit}&maxDeposit=${maxDeposit}&weights=${encodeURIComponent(weightsParam || "{}")}`,
-    [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam],
-  );
-
-  useEffect(() => {
-    async function init() {
-      setInitError(null);
-      setInitWarning(null);
-      try {
-        const { data: bld, error: bErr } = await supabase
-          .from("buildings")
-          .select("*")
-          .eq("id", buildingId)
-          .single();
-        if (bErr) {
-          logCompareError("buildings", bErr);
-          setInitWarning((w) => (w ? `${w} · 건물: ${bErr.message}` : `건물 조회: ${bErr.message}`));
-        }
-        if (bld) setBuilding(bld as Building);
-
-        let query = supabase
-          .from("properties")
-          .select("*")
-          .gte("monthly_rent", minRent)
-          .lte("monthly_rent", maxRent);
-        if (minDeposit > 0) query = query.gte("deposit", minDeposit);
-        if (maxDeposit < 50000) query = query.lte("deposit", maxDeposit);
-
-        const { data: props, error: pErr } = await query;
-        if (pErr) {
-          logCompareError("properties", pErr);
-          setInitError(`매물 조회 실패: ${pErr.message}`);
-          return;
-        }
-
-        if (props && props.length >= 2 && bld) {
-          const typed = props as Property[];
-          setProperties(typed);
-
-          try {
-            const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
-            statsRef.current = stats;
-            commuteByIdRef.current = commuteById;
-
-            let userWeights: Record<string, number> | undefined;
-            if (weightsParam) {
-              try { userWeights = JSON.parse(weightsParam); } catch { /* ignore */ }
-            }
-            const model = createModel(undefined, userWeights);
-            modelRef.current = model;
-            logCompare("init 완료", `매물 ${typed.length}개, 통계·모델 준비됨`);
-
-            try {
-              const initial = selectPair(model, typed, stats, usedPairsRef.current, commuteById);
-              usedPairsRef.current.add([initial.a.id, initial.b.id].sort().join("-"));
-              logCompare("첫 페어 선택", `${initial.a.id} vs ${initial.b.id}`);
-              void enrichPair(initial.a, initial.b, bld as Building);
-            } catch (pe) {
-              logCompareError("selectPair(초기 페어)", pe);
-              setPairLoadError(`페어 선택 실패: ${formatCompareError(pe)}`);
-            }
-          } catch (e) {
-            logCompareError("computeStatsWithCommute", e);
-            setInitError(`통학 통계 계산 실패: ${formatCompareError(e)}`);
-          }
-        } else if (props && props.length >= 2) {
-          setProperties(props as Property[]);
-          setInitWarning(
-            "건물(building) 정보가 없어 비교를 시작할 수 없습니다. 이전 단계에서 건물을 선택했는지, URL의 building 파라미터가 유효한지 확인하세요.",
-          );
-        }
-      } catch (e) {
-        logCompareError("init", e);
-        setInitError(`초기화 실패: ${formatCompareError(e)}`);
-      } finally {
-        setLoading(false);
-      }
-    }
-    init();
-  }, [buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
-
-  const enrichPair = useCallback(
-    async (a: Property, b: Property, bld: Building) => {
-      setPairLoadError(null);
-      let transitA: TransitResult | undefined;
-      let transitB: TransitResult | undefined;
-      let lightsA: StreetLight[] = [];
-      let lightsB: StreetLight[] = [];
-      let densityA: number | undefined;
-      let densityB: number | undefined;
-
-      logCompare("enrichPair 시작", `${a.id} vs ${b.id}`);
-
-      try {
-        try {
-          [transitA, transitB] = await withTimeout(
-            Promise.all([calcTransitForDisplay(a, bld), calcTransitForDisplay(b, bld)]),
-            ENRICH_TRANSIT_TIMEOUT_MS,
-            "도보/버스 경로(calcTransitForDisplay)",
-          );
-        } catch (e) {
-          logCompareError("calcTransitForDisplay", e);
-          setPairLoadError(`경로: ${formatCompareError(e)}`);
-        }
-
-        try {
-          const allLights = await withTimeout(
-            loadStreetLights(),
-            ENRICH_LIGHTS_TIMEOUT_MS,
-            "가로등 목록(loadStreetLights)",
-          );
-          if (allLights.length > 0) {
-            const routeA = [
-              ...(transitA?.propertyToGateRoute ?? []),
-              ...(transitA?.gateToBuildingRoute ?? []),
-            ];
-            const routeB = [
-              ...(transitB?.propertyToGateRoute ?? []),
-              ...(transitB?.gateToBuildingRoute ?? []),
-            ];
-            try {
-              if (routeA.length >= 2) lightsA = filterLightsAlongRoute(allLights, routeA, 30);
-              if (routeB.length >= 2) lightsB = filterLightsAlongRoute(allLights, routeB, 30);
-            } catch (e) {
-              logCompareError("filterLightsAlongRoute", e);
-            }
-            if (transitA) densityA = calcStreetLightDensity(lightsA.length, transitA.walkDistanceM);
-            if (transitB) densityB = calcStreetLightDensity(lightsB.length, transitB.walkDistanceM);
-          }
-        } catch (e) {
-          logCompareError("loadStreetLights", e);
-        }
-      } catch (e) {
-        logCompareError("enrichPair", e);
-        setPairLoadError(`페어 준비: ${formatCompareError(e)}`);
-      } finally {
-        setPair({ a, b, transitA, transitB, lightsA, lightsB, densityA, densityB });
-        logCompare("enrichPair setPair 완료", `${a.id} vs ${b.id}`);
-      }
-    },
-    [],
-  );
-
-  const handleSelect = useCallback(async (property: Property) => {
-    if (!pair || !building || !modelRef.current || !statsRef.current) return;
-    const preferred: "a" | "b" = property.id === pair.a.id ? "a" : "b";
-
-    const currentPair = pair;
-    setShowCompareModal(false);
-    setShowRoutes(false);
-    setPair(null);
-
-    await supabase.from("comparisons").insert({
-      session_id: sessionId,
-      property_a: currentPair.a.id,
-      property_b: currentPair.b.id,
-      preferred,
-      round: round + 1,
-    });
-
-    const winner = preferred === "a" ? currentPair.a : currentPair.b;
-    const loser = preferred === "a" ? currentPair.b : currentPair.a;
-    const wCommute = mergeCommuteFeatures(undefined, commuteByIdRef.current?.get(winner.id));
-    const lCommute = mergeCommuteFeatures(undefined, commuteByIdRef.current?.get(loser.id));
-    const winnerFeat = toFeatureVector(winner, statsRef.current, wCommute);
-    const loserFeat = toFeatureVector(loser, statsRef.current, lCommute);
-    modelRef.current = updateModel(modelRef.current, winnerFeat, loserFeat);
-
-    const nextRound = round + 1;
-    const conv = checkConvergence(
-      convRef.current,
-      modelRef.current,
-      properties,
-      statsRef.current,
-      nextRound,
-      MIN_ROUNDS,
-      MAX_ROUNDS,
-      commuteByIdRef.current ?? undefined,
-    );
-    convRef.current = conv;
-
-    const newScore = Math.max(peakScoreRef.current, conv.convergenceScore);
-    peakScoreRef.current = newScore;
-
-    setRound(nextRound);
-    setConvergenceScore(newScore);
-
-    if (nextRound >= MAX_ROUNDS) {
-      router.push(resultsUrl());
-      return;
-    }
-
-    if (conv.converged) {
-      setConvergePrompt(conv.reason ?? "선호도 학습이 충분히 완료되었습니다!");
-      return;
-    }
-
-    setTimeout(() => {
-      if (!modelRef.current || !statsRef.current || !building) return;
-      try {
-        const next = selectPair(
-          modelRef.current,
-          properties,
-          statsRef.current,
-          usedPairsRef.current,
-          commuteByIdRef.current ?? undefined,
-        );
-        usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
-        void enrichPair(next.a, next.b, building);
-      } catch (e) {
-        logCompareError("selectPair(다음 라운드)", e);
-        setPairLoadError(`다음 페어 선택: ${formatCompareError(e)}`);
-      }
-    }, 300);
-  }, [pair, building, round, sessionId, properties, enrichPair, router, resultsUrl]);
-
-  const handleContinue = useCallback(() => {
-    setConvergePrompt(null);
-    if (!building || !modelRef.current || !statsRef.current) return;
-    setTimeout(() => {
-      try {
-        const next = selectPair(
-          modelRef.current!,
-          properties,
-          statsRef.current!,
-          usedPairsRef.current,
-          commuteByIdRef.current ?? undefined,
-        );
-        usedPairsRef.current.add([next.a.id, next.b.id].sort().join("-"));
-        void enrichPair(next.a, next.b, building!);
-      } catch (e) {
-        logCompareError("selectPair(수렴 후 계속)", e);
-        setPairLoadError(`페어 선택: ${formatCompareError(e)}`);
-      }
-    }, 300);
-  }, [building, properties, enrichPair]);
-
-  // ── Markers ──
-  const allMarkers: KakaoMapMarker[] = [];
-  if (pair) {
-    allMarkers.push(
-      { lat: pair.a.lat, lng: pair.a.lng, label: `A: ${pair.a.monthly_rent}만`, color: "red" },
-      { lat: pair.b.lat, lng: pair.b.lng, label: `B: ${pair.b.monthly_rent}만`, color: "blue" },
-    );
-  }
+  const allMarkers: KakaoMapMarker[] = [
+    { lat: pA.lat, lng: pA.lng, label: `A: ${pA.monthly_rent}만`, color: "red" },
+    { lat: pB.lat, lng: pB.lng, label: `B: ${pB.monthly_rent}만`, color: "blue" },
+  ];
   if (building) {
     allMarkers.push({ lat: building.lat, lng: building.lng, label: building.name, color: "star" });
   }
 
-  // ── Polylines ──
   const routePolylines: KakaoMapPolyline[] = [];
-  if (showRoutes && pair) {
-    if (pair.transitA) {
-      const t = pair.transitA;
-      if (t.propertyToGateRoute.length >= 2)
-        routePolylines.push({ path: t.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
-      if (t.gateToBuildingRoute.length >= 2)
-        routePolylines.push({ path: t.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
-      if (t.busPath.length >= 2)
-        routePolylines.push({ path: t.busPath, color: "#22c55e", weight: 4, opacity: 0.7, style: "shortdash" });
+  if (showRoutes) {
+    if (transitA) {
+      if (transitA.propertyToGateRoute.length >= 2)
+        routePolylines.push({ path: transitA.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
+      if (transitA.gateToBuildingRoute.length >= 2)
+        routePolylines.push({ path: transitA.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
     }
-    if (pair.transitB) {
-      const t = pair.transitB;
-      if (t.propertyToGateRoute.length >= 2)
-        routePolylines.push({ path: t.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
-      if (t.gateToBuildingRoute.length >= 2)
-        routePolylines.push({ path: t.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
-      if (t.busPath.length >= 2)
-        routePolylines.push({ path: t.busPath, color: "#06b6d4", weight: 4, opacity: 0.7, style: "shortdash" });
+    if (transitB) {
+      if (transitB.propertyToGateRoute.length >= 2)
+        routePolylines.push({ path: transitB.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+      if (transitB.gateToBuildingRoute.length >= 2)
+        routePolylines.push({ path: transitB.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
     }
-  }
-
-  // ── Early returns ──
-  if (loading) {
-    return (
-      <main className="flex h-dvh items-center justify-center">
-        <p className="text-sm text-gray-400 animate-pulse">매물 불러오는 중…</p>
-      </main>
-    );
-  }
-  if (initError) {
-    return (
-      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
-        <p className="text-center font-semibold text-red-600">초기화 오류</p>
-        <p className="max-w-md text-center text-sm text-gray-600">{initError}</p>
-        <Button variant="outline" onClick={() => router.back()}>돌아가기</Button>
-      </main>
-    );
-  }
-  if (properties.length >= 2 && !building) {
-    return (
-      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
-        <p className="text-center font-semibold text-amber-800">건물 정보 없음</p>
-        <p className="max-w-md text-center text-sm text-gray-600">
-          {initWarning ?? "URL의 building 파라미터가 없거나 잘못되었습니다."}
-        </p>
-        <Button variant="outline" onClick={() => router.back()}>돌아가기</Button>
-      </main>
-    );
-  }
-  if (properties.length < 2) {
-    return (
-      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
-        <p className="text-center text-gray-600">비교할 매물이 부족합니다 (최소 2개 필요)</p>
-        <button className="text-sm text-blue-600 underline" onClick={() => router.back()}>필터 조건 변경</button>
-      </main>
-    );
   }
 
   return (
     <main className="relative h-dvh w-full overflow-hidden">
-      {/* Progress bar */}
+      {/* 상단 진행 표시 */}
       <div className="absolute inset-x-0 top-0 z-10 px-4 pt-3">
-        <ProgressBar learningRate={convergenceScore} round={round} minRounds={MIN_ROUNDS} maxRounds={MAX_ROUNDS} />
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-gray-600">
+            {step.categoryIcon} {step.categoryLabel} 비교 중
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            {step.round + 1}번째 비교
+          </span>
+        </div>
+        <div className="mt-1 h-1.5 w-full rounded-full bg-gray-100">
+          <motion.div
+            className="h-full rounded-full bg-blue-500"
+            initial={{ width: 0 }}
+            animate={{ width: `${step.microProgress * 100}%` }}
+            transition={{ duration: 0.4 }}
+          />
+        </div>
       </div>
 
-      {pairLoadError && (
-        <div className="absolute inset-x-0 top-14 z-20 mx-4 max-h-24 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 shadow-sm">
-          <p className="font-semibold">참고</p>
-          <p className="mt-0.5 text-amber-900">{pairLoadError}</p>
-        </div>
-      )}
-
-      {/* Route time overlay */}
-      {showRoutes && pair && (
-        <div className="absolute left-4 right-4 top-[72px] z-20 rounded-xl bg-white/95 px-4 py-3 shadow-md backdrop-blur-sm">
-          <div className="flex items-center gap-4 text-sm">
-            <div className="flex-1">
-              <span className="mr-2 font-bold text-red-500">A</span>
-              {pair.transitA ? (
-                <>
-                  <span className="text-gray-700">🚶 {pair.transitA.walkMin}분</span>
-                  <span className="mx-1 text-gray-300">·</span>
-                  <span className="text-gray-500 text-xs">({(pair.transitA.walkDistanceM / 1000).toFixed(1)}km)</span>
-                  {pair.transitA.busMin > 0 && (
-                    <>
-                      <span className="mx-1 text-gray-300">·</span>
-                      <span className="text-gray-700">🚌 {pair.transitA.busMin}분</span>
-                    </>
-                  )}
-                </>
-              ) : (
-                <span className="text-gray-400">경로 없음</span>
-              )}
-            </div>
-            <div className="h-6 w-px bg-gray-200" />
-            <div className="flex-1">
-              <span className="mr-2 font-bold text-blue-500">B</span>
-              {pair.transitB ? (
-                <>
-                  <span className="text-gray-700">🚶 {pair.transitB.walkMin}분</span>
-                  <span className="mx-1 text-gray-300">·</span>
-                  <span className="text-gray-500 text-xs">({(pair.transitB.walkDistanceM / 1000).toFixed(1)}km)</span>
-                  {pair.transitB.busMin > 0 && (
-                    <>
-                      <span className="mx-1 text-gray-300">·</span>
-                      <span className="text-gray-700">🚌 {pair.transitB.busMin}분</span>
-                    </>
-                  )}
-                </>
-              ) : (
-                <span className="text-gray-400">경로 없음</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Map */}
+      {/* 지도 */}
       <KakaoMap
         center={building ? { lat: building.lat, lng: building.lng } : BUSAN_UNIV}
         level={5}
@@ -486,104 +230,70 @@ function CompareContent() {
         fitPadding={120}
       />
 
-      {/* Pair loading spinner */}
-      {!pair && !loading && properties.length >= 2 && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div className="rounded-xl bg-white/90 px-5 py-3 shadow-md backdrop-blur-sm">
-            <p className="text-sm text-gray-500 animate-pulse">다음 매물 준비 중…</p>
-          </div>
+      {/* 하단 */}
+      <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4">
+        {/* 액션 버튼 */}
+        <div className="mb-2 flex gap-2">
+          <button
+            onClick={() => { setShowModal(true); setShowRoutes(false); }}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/95 py-2.5 text-sm font-semibold text-gray-700 shadow-md backdrop-blur-sm transition active:scale-[0.97]"
+          >
+            <GitCompareArrows className="size-4" />
+            매물 비교
+          </button>
+          <button
+            onClick={() => setShowRoutes((prev) => !prev)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold shadow-md backdrop-blur-sm transition active:scale-[0.97] ${showRoutes ? "bg-blue-500 text-white" : "bg-white/95 text-gray-700"}`}
+          >
+            <Route className="size-4" />
+            거리 비교
+          </button>
         </div>
-      )}
 
-      {/* Bottom: Action buttons + Property cards */}
-      {pair && !convergePrompt && (
-        <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4">
-          {/* Action buttons */}
-          <div className="mb-2 flex gap-2">
-            <button
-              onClick={() => { setShowCompareModal(true); setShowRoutes(false); }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/95 py-2.5 text-sm font-semibold text-gray-700 shadow-md backdrop-blur-sm transition active:scale-[0.97]"
-            >
-              <GitCompareArrows className="size-4" />
-              매물 비교
-            </button>
-            <button
-              onClick={() => setShowRoutes((prev) => !prev)}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold shadow-md backdrop-blur-sm transition active:scale-[0.97] ${
-                showRoutes
-                  ? "bg-blue-500 text-white"
-                  : "bg-white/95 text-gray-700"
-              }`}
-            >
-              <Route className="size-4" />
-              거리 비교
-            </button>
-          </div>
-
-          {/* A / B cards */}
-          <div className="flex gap-2">
-            {/* Card A */}
-            <div className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
-              <span className="mb-1 text-xs font-bold text-red-500">A</span>
-              <p className="text-sm font-semibold">{priceLabel(pair.a)}</p>
-              {pair.a.trade_type !== "전세" && (
-                <p className="text-xs text-gray-400">보증금 {pair.a.deposit.toLocaleString()}만</p>
-              )}
-              <p className="mt-0.5 text-xs text-gray-500">
-                {pyeong(pair.a.exclusive_area)} · {pair.a.rooms}방
-              </p>
-              {pair.transitA && pair.transitA.walkMin > 0 && (
-                <p className="mt-0.5 text-[11px] text-gray-400">
-                  도보 {pair.transitA.walkMin}분
-                  {pair.transitA.busMin > 0 && ` · 버스 ${pair.transitA.busMin}분`}
+        {/* A / B 카드 */}
+        <div className="flex gap-2">
+          {(["a", "b"] as const).map((side) => {
+            const p = side === "a" ? pA : pB;
+            const transit = side === "a" ? transitA : transitB;
+            const color = side === "a" ? "red" : "blue";
+            return (
+              <div key={side} className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
+                <span className={`mb-1 text-xs font-bold text-${color}-500`}>{side.toUpperCase()}</span>
+                <p className="text-sm font-semibold">{priceLabel(p)}</p>
+                {p.trade_type !== "전세" && (
+                  <p className="text-xs text-gray-400">보증금 {p.deposit.toLocaleString()}만</p>
+                )}
+                <p className="mt-0.5 text-xs text-gray-500">
+                  {pyeong(p.exclusive_area)} · {p.rooms}방
                 </p>
-              )}
-              <Button
-                size="sm"
-                className="mt-2 w-full bg-red-500 text-white hover:bg-red-600"
-                onClick={() => handleSelect(pair.a)}
-              >
-                A 선택
-              </Button>
-            </div>
-
-            {/* Card B */}
-            <div className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
-              <span className="mb-1 text-xs font-bold text-blue-500">B</span>
-              <p className="text-sm font-semibold">{priceLabel(pair.b)}</p>
-              {pair.b.trade_type !== "전세" && (
-                <p className="text-xs text-gray-400">보증금 {pair.b.deposit.toLocaleString()}만</p>
-              )}
-              <p className="mt-0.5 text-xs text-gray-500">
-                {pyeong(pair.b.exclusive_area)} · {pair.b.rooms}방
-              </p>
-              {pair.transitB && pair.transitB.walkMin > 0 && (
-                <p className="mt-0.5 text-[11px] text-gray-400">
-                  도보 {pair.transitB.walkMin}분
-                  {pair.transitB.busMin > 0 && ` · 버스 ${pair.transitB.busMin}분`}
-                </p>
-              )}
-              <Button
-                size="sm"
-                className="mt-2 w-full bg-blue-500 text-white hover:bg-blue-600"
-                onClick={() => handleSelect(pair.b)}
-              >
-                B 선택
-              </Button>
-            </div>
-          </div>
+                {transit && transit.walkMin > 0 && (
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    도보 {transit.walkMin}분
+                    {transit.busMin > 0 && ` · 버스 ${transit.busMin}분`}
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className={`mt-2 w-full text-white ${color === "red" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}
+                  onClick={() => onAnswer(side)}
+                >
+                  {side.toUpperCase()} 선택
+                </Button>
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      {/* Comparison Modal */}
+      {/* 비교 모달 */}
       <AnimatePresence>
-        {showCompareModal && pair && (
+        {showModal && (
           <motion.div
             className="absolute inset-0 z-30 flex items-end justify-center bg-black/40"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setShowCompareModal(false)}
+            onClick={() => setShowModal(false)}
           >
             <motion.div
               className="w-full max-w-lg rounded-t-2xl bg-white shadow-xl"
@@ -595,165 +305,68 @@ function CompareContent() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between px-5 pt-4 pb-2">
-                <h3 className="text-base font-bold">매물 비교</h3>
-                <button onClick={() => setShowCompareModal(false)} className="rounded-full p-1 text-gray-400 hover:bg-gray-100">
+                <h3 className="text-base font-bold">매물 상세 비교</h3>
+                <button onClick={() => setShowModal(false)} className="rounded-full p-1 text-gray-400 hover:bg-gray-100">
                   <X className="size-5" />
                 </button>
               </div>
 
               <div className="overflow-y-auto px-5 pb-4" style={{ maxHeight: "calc(75vh - 120px)" }}>
-                {/* Header */}
                 <div className="mb-2 grid grid-cols-[1fr_1fr_1fr] gap-2 border-b pb-2">
                   <span className="text-xs text-gray-400">항목</span>
                   <span className="text-center text-xs font-bold text-red-500">A</span>
                   <span className="text-center text-xs font-bold text-blue-500">B</span>
                 </div>
-
-                <CmpRow label="거래유형" a={pair.a.trade_type} b={pair.b.trade_type} />
-                <CmpRow
-                  label="가격"
-                  a={priceLabel(pair.a)}
-                  b={priceLabel(pair.b)}
-                  better={betterLower(pair.a.monthly_rent || pair.a.deposit, pair.b.monthly_rent || pair.b.deposit)}
-                />
-                {(pair.a.trade_type !== "전세" || pair.b.trade_type !== "전세") && (
-                  <CmpRow
-                    label="보증금"
-                    a={`${pair.a.deposit.toLocaleString()}만`}
-                    b={`${pair.b.deposit.toLocaleString()}만`}
-                    better={betterLower(pair.a.deposit, pair.b.deposit)}
-                  />
-                )}
-                <CmpRow
-                  label="관리비"
-                  a={`${(pair.a.maintenance_fee / 10000).toFixed(1)}만`}
-                  b={`${(pair.b.maintenance_fee / 10000).toFixed(1)}만`}
-                  better={betterLower(pair.a.maintenance_fee, pair.b.maintenance_fee)}
-                />
-                <CmpRow
-                  label="실평수"
-                  a={pyeong(pair.a.exclusive_area)}
-                  b={pyeong(pair.b.exclusive_area)}
-                  better={betterHigher(pair.a.exclusive_area, pair.b.exclusive_area)}
-                />
-                <CmpRow
-                  label="방"
-                  a={`${pair.a.rooms}개`}
-                  b={`${pair.b.rooms}개`}
-                  better={betterHigher(pair.a.rooms, pair.b.rooms)}
-                />
-                <CmpRow label="방향" a={pair.a.direction || "-"} b={pair.b.direction || "-"} />
-                <CmpRow label="년식" a={buildYearLabel(pair.a)} b={buildYearLabel(pair.b)} />
-                <CmpRow label="유형" a={pair.a.property_type} b={pair.b.property_type} />
-                <CmpRow
-                  label="주차"
-                  a={pair.a.parking ? "가능" : "불가"}
-                  b={pair.b.parking ? "가능" : "불가"}
-                />
-                <CmpRow
-                  label="엘리베이터"
-                  a={pair.a.has_elevator ? "있음" : "없음"}
-                  b={pair.b.has_elevator ? "있음" : "없음"}
-                />
-                <CmpRow
-                  label="CCTV"
-                  a={pair.a.has_cctv ? "있음" : "없음"}
-                  b={pair.b.has_cctv ? "있음" : "없음"}
-                />
-                {(pair.a.noise_level != null || pair.b.noise_level != null) && (
+                <CmpRow label="거래유형" a={pA.trade_type} b={pB.trade_type} />
+                <CmpRow label="가격" a={priceLabel(pA)} b={priceLabel(pB)} better={betterLower(pA.monthly_rent || pA.deposit, pB.monthly_rent || pB.deposit)} />
+                <CmpRow label="보증금" a={`${pA.deposit.toLocaleString()}만`} b={`${pB.deposit.toLocaleString()}만`} better={betterLower(pA.deposit, pB.deposit)} />
+                <CmpRow label="관리비" a={`${(pA.maintenance_fee / 10000).toFixed(1)}만`} b={`${(pB.maintenance_fee / 10000).toFixed(1)}만`} better={betterLower(pA.maintenance_fee, pB.maintenance_fee)} />
+                <CmpRow label="실평수" a={pyeong(pA.exclusive_area)} b={pyeong(pB.exclusive_area)} better={betterHigher(pA.exclusive_area, pB.exclusive_area)} />
+                <CmpRow label="방" a={`${pA.rooms}개`} b={`${pB.rooms}개`} better={betterHigher(pA.rooms, pB.rooms)} />
+                <CmpRow label="방향" a={pA.direction || "-"} b={pB.direction || "-"} />
+                <CmpRow label="년식" a={buildYearLabel(pA)} b={buildYearLabel(pB)} />
+                <CmpRow label="주차" a={pA.parking ? "가능" : "불가"} b={pB.parking ? "가능" : "불가"} />
+                <CmpRow label="엘리베이터" a={pA.has_elevator ? "있음" : "없음"} b={pB.has_elevator ? "있음" : "없음"} />
+                <CmpRow label="CCTV" a={pA.has_cctv ? "있음" : "없음"} b={pB.has_cctv ? "있음" : "없음"} />
+                <CmpRow label="방범창" a={pA.has_entrance_security ? "있음" : "없음"} b={pB.has_entrance_security ? "있음" : "없음"} />
+                <CmpRow label="인터폰" a={pA.has_intercom ? "있음" : "없음"} b={pB.has_intercom ? "있음" : "없음"} />
+                {(pA.noise_level != null || pB.noise_level != null) && (
                   <CmpRow
                     label="소음"
-                    a={pair.a.noise_level != null ? `${pair.a.noise_level}dB` : "-"}
-                    b={pair.b.noise_level != null ? `${pair.b.noise_level}dB` : "-"}
-                    better={
-                      pair.a.noise_level != null && pair.b.noise_level != null
-                        ? betterLower(pair.a.noise_level, pair.b.noise_level)
-                        : null
-                    }
+                    a={pA.noise_level != null ? `${pA.noise_level}dB` : "-"}
+                    b={pB.noise_level != null ? `${pB.noise_level}dB` : "-"}
+                    better={pA.noise_level != null && pB.noise_level != null ? betterLower(pA.noise_level, pB.noise_level) : null}
                   />
                 )}
-                {(pair.transitA || pair.transitB) && (
+                {(transitA || transitB) && (
                   <>
                     <CmpRow
                       label="도보"
-                      a={pair.transitA ? `${pair.transitA.walkMin}분` : "-"}
-                      b={pair.transitB ? `${pair.transitB.walkMin}분` : "-"}
-                      better={
-                        pair.transitA && pair.transitB
-                          ? betterLower(pair.transitA.walkMin, pair.transitB.walkMin)
-                          : null
-                      }
+                      a={transitA ? `${transitA.walkMin}분` : "-"}
+                      b={transitB ? `${transitB.walkMin}분` : "-"}
+                      better={transitA && transitB ? betterLower(transitA.walkMin, transitB.walkMin) : null}
                     />
                     <CmpRow
                       label="버스"
-                      a={pair.transitA?.busMin ? `${pair.transitA.busMin}분` : "-"}
-                      b={pair.transitB?.busMin ? `${pair.transitB.busMin}분` : "-"}
-                      better={
-                        pair.transitA?.busMin && pair.transitB?.busMin
-                          ? betterLower(pair.transitA.busMin, pair.transitB.busMin)
-                          : null
-                      }
+                      a={transitA?.busMin ? `${transitA.busMin}분` : "-"}
+                      b={transitB?.busMin ? `${transitB.busMin}분` : "-"}
+                      better={transitA?.busMin && transitB?.busMin ? betterLower(transitA.busMin, transitB.busMin) : null}
                     />
                   </>
                 )}
-                {(pair.densityA != null || pair.densityB != null) && (
+                {(densityA != null || densityB != null) && (
                   <CmpRow
                     label="가로등"
-                    a={pair.densityA != null ? `${pair.densityA.toFixed(1)}개/100m` : "-"}
-                    b={pair.densityB != null ? `${pair.densityB.toFixed(1)}개/100m` : "-"}
-                    better={
-                      pair.densityA != null && pair.densityB != null
-                        ? betterHigher(pair.densityA, pair.densityB)
-                        : null
-                    }
+                    a={densityA != null ? `${densityA.toFixed(1)}개/100m` : "-"}
+                    b={densityB != null ? `${densityB.toFixed(1)}개/100m` : "-"}
+                    better={densityA != null && densityB != null ? betterHigher(densityA, densityB) : null}
                   />
                 )}
               </div>
 
-              {/* Select buttons */}
               <div className="flex gap-3 border-t px-5 py-3">
-                <Button
-                  className="flex-1 bg-red-500 text-white hover:bg-red-600"
-                  onClick={() => handleSelect(pair.a)}
-                >
-                  A 선택
-                </Button>
-                <Button
-                  className="flex-1 bg-blue-500 text-white hover:bg-blue-600"
-                  onClick={() => handleSelect(pair.b)}
-                >
-                  B 선택
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Convergence prompt */}
-      <AnimatePresence>
-        {convergePrompt && (
-          <motion.div
-            className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <motion.div
-              className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-            >
-              <p className="mb-2 text-lg font-bold">학습 완료!</p>
-              <p className="mb-5 text-sm text-gray-500">{convergePrompt}</p>
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={handleContinue}>
-                  비교 더 하기
-                </Button>
-                <Button className="flex-1" onClick={() => router.push(resultsUrl())}>
-                  결과 보기
-                </Button>
+                <Button className="flex-1 bg-red-500 text-white hover:bg-red-600" onClick={() => { onAnswer("a"); setShowModal(false); }}>A 선택</Button>
+                <Button className="flex-1 bg-blue-500 text-white hover:bg-blue-600" onClick={() => { onAnswer("b"); setShowModal(false); }}>B 선택</Button>
               </div>
             </motion.div>
           </motion.div>
@@ -767,13 +380,232 @@ function CmpRow({ label, a, b, better }: { label: string; a: string; b: string; 
   return (
     <div className="grid grid-cols-[1fr_1fr_1fr] gap-2 border-b border-gray-50 py-2 last:border-0">
       <span className="text-xs text-gray-500">{label}</span>
-      <span className={`text-center text-sm ${better === "a" ? "font-semibold text-green-600" : "text-gray-700"}`}>
-        {a}
-      </span>
-      <span className={`text-center text-sm ${better === "b" ? "font-semibold text-green-600" : "text-gray-700"}`}>
-        {b}
-      </span>
+      <span className={`text-center text-sm ${better === "a" ? "font-semibold text-green-600" : "text-gray-700"}`}>{a}</span>
+      <span className={`text-center text-sm ${better === "b" ? "font-semibold text-green-600" : "text-gray-700"}`}>{b}</span>
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
+// 메인 Compare 컨텐츠
+// ──────────────────────────────────────────────────────────
+
+function CompareContent() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const buildingId = params.get("building") ?? "";
+  const minRent = Number(params.get("minRent") ?? 10);
+  const maxRent = Number(params.get("maxRent") ?? 100);
+  const minDeposit = Number(params.get("minDeposit") ?? 0);
+  const maxDeposit = Number(params.get("maxDeposit") ?? 50000);
+  // preferences 페이지에서 넘어온 사용자 서열 (Borda prior 초기화용)
+  const rank1Param = params.get("rank1");
+  const rank2Param = params.get("rank2");
+  const initialRanking: number[] = [
+    ...(rank1Param !== null ? [Number(rank1Param)] : []),
+    ...(rank2Param !== null ? [Number(rank2Param)] : []),
+  ];
+  const [sessionId] = useState(() => crypto.randomUUID());
+
+  const [building, setBuilding] = useState<Building | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // Navigator ref (초기화 후 교체 없음)
+  const navRef = useRef<InteractiveNavigator | null>(null);
+
+  // 현재 스텝 (React state로 재렌더 트리거)
+  const [step, setStep] = useState<NavigatorStep | null>(null);
+
+  // Micro 단계 경로·가로등 enrich 상태
+  const [enrichState, setEnrichState] = useState<PairEnrichState>({});
+  const [enrichLoading, setEnrichLoading] = useState(false);
+
+  const resultsUrl = useCallback(
+    (topIds: string[], category: string) =>
+      `/results?session=${sessionId}&building=${buildingId}&minRent=${minRent}&maxRent=${maxRent}&minDeposit=${minDeposit}&maxDeposit=${maxDeposit}&topIds=${encodeURIComponent(topIds.join(","))}&category=${encodeURIComponent(category)}`,
+    [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit],
+  );
+
+  // ── 초기 데이터 로드 ──
+  useEffect(() => {
+    async function init() {
+      setInitError(null);
+      try {
+        const { data: bld, error: bErr } = await supabase
+          .from("buildings")
+          .select("*")
+          .eq("id", buildingId)
+          .single();
+        if (bErr) logCompareError("buildings", bErr);
+        if (bld) setBuilding(bld as Building);
+
+        let query = supabase.from("properties").select("*")
+          .gte("monthly_rent", minRent)
+          .lte("monthly_rent", maxRent);
+        if (minDeposit > 0) query = query.gte("deposit", minDeposit);
+        if (maxDeposit < 50000) query = query.lte("deposit", maxDeposit);
+
+        const { data: props, error: pErr } = await query;
+        if (pErr || !props || props.length < 2 || !bld) {
+          setInitError(pErr?.message ?? "매물이 부족합니다 (최소 2개 필요)");
+          return;
+        }
+
+        const typed = props as Property[];
+        const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
+
+        const nav = new InteractiveNavigator(typed, stats, commuteById, initialRanking.length > 0 ? initialRanking : undefined);
+        navRef.current = nav;
+        const s = nav.current();
+        setStep(s);
+
+        logCompare("v2 navigator init", `매물 ${typed.length}개`);
+      } catch (e) {
+        logCompareError("init", e);
+        setInitError(`초기화 실패: ${formatCompareError(e)}`);
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, [buildingId, minRent, maxRent, minDeposit, maxDeposit]);
+
+  // ── Micro 단계에서 매물 pair enrich (경로, 가로등) ──
+  const enrichMicroPair = useCallback(async (pA: Property, pB: Property, bld: Building) => {
+    setEnrichLoading(true);
+    setEnrichState({});
+    try {
+      const [transitA, transitB] = await withTimeout(
+        Promise.all([calcTransitForDisplay(pA, bld), calcTransitForDisplay(pB, bld)]),
+        ENRICH_TRANSIT_TIMEOUT_MS,
+        "경로 계산",
+      ).catch(() => [undefined, undefined]);
+
+      let densityA: number | undefined;
+      let densityB: number | undefined;
+      let lightsA: StreetLight[] = [];
+      let lightsB: StreetLight[] = [];
+      try {
+        const allLights = await withTimeout(loadStreetLights(), ENRICH_LIGHTS_TIMEOUT_MS, "가로등");
+        if (allLights.length > 0 && transitA) {
+          const routeA = [...(transitA.propertyToGateRoute ?? []), ...(transitA.gateToBuildingRoute ?? [])];
+          if (routeA.length >= 2) lightsA = filterLightsAlongRoute(allLights, routeA, 30);
+          densityA = calcStreetLightDensity(lightsA.length, transitA.walkDistanceM);
+        }
+        if (allLights.length > 0 && transitB) {
+          const routeB = [...(transitB.propertyToGateRoute ?? []), ...(transitB.gateToBuildingRoute ?? [])];
+          if (routeB.length >= 2) lightsB = filterLightsAlongRoute(allLights, routeB, 30);
+          densityB = calcStreetLightDensity(lightsB.length, transitB.walkDistanceM);
+        }
+      } catch { /* 가로등 선택사항 */ }
+
+      setEnrichState({ transitA: transitA ?? undefined, transitB: transitB ?? undefined, lightsA, lightsB, densityA, densityB });
+    } finally {
+      setEnrichLoading(false);
+    }
+  }, []);
+
+  // ── Micro 스텝 변경 시 enrich 실행 ──
+  useEffect(() => {
+    if (step?.type === "micro" && building) {
+      void enrichMicroPair(step.propertyA, step.propertyB, building);
+    }
+  }, [step, building, enrichMicroPair]);
+
+  // ── 답변 처리 ──
+  const handleAnswer = useCallback((winner: "a" | "b") => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    nav.answer(winner);
+    const next = nav.current();
+    setStep(next);
+
+    if (next.type === "done") {
+      router.push(resultsUrl(next.topPropertyIds, next.categoryLabel));
+    }
+  }, [router, resultsUrl]);
+
+  // ── 로딩 ──
+  if (loading) {
+    return (
+      <main className="flex h-dvh items-center justify-center">
+        <p className="animate-pulse text-sm text-gray-400">매물 불러오는 중…</p>
+      </main>
+    );
+  }
+
+  if (initError) {
+    return (
+      <main className="flex h-dvh flex-col items-center justify-center gap-4 px-6">
+        <p className="font-semibold text-red-600">초기화 오류</p>
+        <p className="max-w-md text-center text-sm text-gray-600">{initError}</p>
+        <Button variant="outline" onClick={() => router.back()}>돌아가기</Button>
+      </main>
+    );
+  }
+
+  if (!step) {
+    return (
+      <main className="flex h-dvh items-center justify-center">
+        <p className="animate-pulse text-sm text-gray-400">준비 중…</p>
+      </main>
+    );
+  }
+
+  // ── Macro 단계 ──
+  if (step.type === "macro") {
+    return (
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`macro-${step.round}`}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.2 }}
+        >
+          <MacroCompareView step={step} onAnswer={handleAnswer} />
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
+
+  // ── Micro 단계 ──
+  if (step.type === "micro") {
+    if (enrichLoading && !enrichState.transitA) {
+      return (
+        <main className="flex h-dvh items-center justify-center">
+          <p className="animate-pulse text-sm text-gray-400">매물 경로 계산 중…</p>
+        </main>
+      );
+    }
+    return (
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`micro-${step.round}`}
+          className="h-dvh"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          <MicroCompareView
+            step={step}
+            enrichState={enrichState}
+            building={building}
+            onAnswer={handleAnswer}
+          />
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
+
+  // Done (router.push 중)
+  return (
+    <main className="flex h-dvh items-center justify-center">
+      <p className="animate-pulse text-sm text-gray-400">결과 페이지로 이동 중…</p>
+    </main>
   );
 }
 

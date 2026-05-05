@@ -15,7 +15,6 @@ interface LineDef {
 }
 
 const LINES: LineDef[] = [
-  { key: "evr", color: "#6366f1", label: "EVR (정보가치)", getValue: (d) => d.evr },
   { key: "concentration", color: "#10b981", label: "사후분포 집중도", getValue: (d) => d.concentration },
   { key: "topKStability", color: "#f59e0b", label: "Top-K 안정도", getValue: (d) => d.topKStability, dash: "6,3" },
   { key: "cosine", color: "#ef4444", label: "코사인 유사도(w*)", getValue: (d) => d.cosineToHidden, dash: "2,2" },
@@ -77,6 +76,14 @@ export function renderChartSvg(result: SimulationResult): string {
     const x = PAD.left + (meta.cosineReachedRound / maxRound) * plotW;
     svg += `<line x1="${x}" x2="${x}" y1="${PAD.top}" y2="${PAD.top + plotH}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>\n`;
     svg += `<text x="${x + 3}" y="${PAD.top + 12}" font-size="9" fill="#ef4444">cos≥${meta.hiddenMatchCosine} @${meta.cosineReachedRound}회</text>\n`;
+  }
+
+  if (meta.cosineMaxRound > 0) {
+    const x = PAD.left + (meta.cosineMaxRound / maxRound) * plotW;
+    const val = Math.min(meta.cosineMaxValue, yMax);
+    const y = PAD.top + plotH - (val / yMax) * plotH;
+    svg += `<circle cx="${x}" cy="${y}" r="4" fill="#ef4444" stroke="#fff" stroke-width="1.5"/>\n`;
+    svg += `<text x="${x + 6}" y="${y - 4}" font-size="9" fill="#ef4444" font-weight="bold">max cos=${meta.cosineMaxValue.toFixed(4)} @${meta.cosineMaxRound}회</text>\n`;
   }
 
   if (meta.convergenceRound != null) {

@@ -41,6 +41,21 @@ export interface Property {
   bus_to_gate_transfers?: number | null;
   bus_to_gate_info?: unknown;
 
+  /** 층 정보 (엘베+보안 백필) */
+  floor_number?: number | null;
+  total_floors?: number | null;
+
+  /** 보안 요소 (엘베+보안 백필) */
+  has_intercom?: boolean | null;
+  has_security_guard?: boolean | null;
+  has_card_key?: boolean | null;
+
+  /** 벌레발생가능성: '상' | '중' | '하' */
+  bug_risk?: string | null;
+
+  /** 경사도 평균(%) - 후속 작업용 */
+  walk_slope_avg?: number | null;
+
   raw_features?: unknown;
   feature_vector?: number[];
   created_at?: string;
@@ -99,4 +114,22 @@ export interface PriceFilter {
   maxRent: number;
   minDeposit: number;
   maxDeposit: number;
+}
+
+export interface CctvLocation {
+  id: number;
+  lat: number;
+  lng: number;
+  /** '건물 외벽', '로봇식' 등 수집 원본 이름 */
+  location_type: string | null;
+}
+
+export interface Amenity {
+  id: string;  // Kakao place_id
+  /** 'convenience_store' | 'gym' | 'olive_young' | 'coin_laundry' | 'hospital' | 'pharmacy' | 'bank' */
+  type: string;
+  name: string;
+  lat: number;
+  lng: number;
+  address: string | null;
 }

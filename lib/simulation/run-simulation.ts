@@ -20,6 +20,7 @@ export interface SimulationConfig {
   absoluteMaxRounds: number;
   hiddenMatchCosine: number;
   initialWeights?: Record<string, number>;
+  silent?: boolean;
 }
 
 export interface SimulationResult {
@@ -32,6 +33,8 @@ export interface SimulationResult {
     initialPrior: number[];
     totalRounds: number;
     cosineReachedRound: number | null;
+    cosineMaxValue: number;
+    cosineMaxRound: number;
     convergenceReason: string | null;
     convergenceRound: number | null;
   };
@@ -83,6 +86,8 @@ export function runSimulation(
   const series: SimulationResult["series"] = [];
 
   let cosineReachedRound: number | null = null;
+  let cosineMaxValue = -1;
+  let cosineMaxRound = 0;
   let convergenceReason: string | null = null;
   let convergenceRound: number | null = null;
   let totalRounds = 0;
@@ -122,6 +127,11 @@ export function runSimulation(
 
     series.push({ ...metrics, cosineToHidden: cos });
 
+    if (cos > cosineMaxValue) {
+      cosineMaxValue = cos;
+      cosineMaxRound = round;
+    }
+
     if (cosineReachedRound == null && cos >= config.hiddenMatchCosine) {
       cosineReachedRound = round;
     }
@@ -153,7 +163,7 @@ export function runSimulation(
       break;
     }
 
-    if (round % 100 === 0) {
+    if (!config.silent && round % 100 === 0) {
       process.stdout.write(
         `  round ${round}: cos=${cos.toFixed(4)} evr=${metrics.evr.toFixed(4)} conc=${metrics.concentration.toFixed(4)} topK=${metrics.topKStability.toFixed(2)}\n`,
       );
@@ -170,6 +180,8 @@ export function runSimulation(
       initialPrior,
       totalRounds,
       cosineReachedRound,
+      cosineMaxValue,
+      cosineMaxRound,
       convergenceReason,
       convergenceRound,
     },

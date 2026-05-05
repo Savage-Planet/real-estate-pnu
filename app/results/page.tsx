@@ -85,6 +85,11 @@ function ResultsContent() {
   const minDeposit = Number(params.get("minDeposit") ?? 0);
   const maxDeposit = Number(params.get("maxDeposit") ?? 99999);
   const weightsParam = params.get("weights");
+  /** v2 계층 모델에서 전달된 순위 ID (콤마 구분) */
+  const topIdsParam = params.get("topIds");
+  /** v2 선택 카테고리 레이블 */
+  const categoryParam = params.get("category");
+  const isV2 = Boolean(topIdsParam);
 
   const [ranked, setRanked] = useState<ScoredProperty[]>([]);
   const [building, setBuilding] = useState<Building | null>(null);
@@ -119,11 +124,13 @@ function ResultsContent() {
 
       const [{ data: bld }, { data: comparisons }, { data: props }] = await Promise.all([
         supabase.from("buildings").select("*").eq("id", buildingId).single(),
-        supabase
-          .from("comparisons")
-          .select("*")
-          .eq("session_id", sessionId)
-          .order("round", { ascending: true }),
+        isV2
+          ? Promise.resolve({ data: [] as unknown[] })  // v2는 comparisons 불필요
+          : supabase
+              .from("comparisons")
+              .select("*")
+              .eq("session_id", sessionId)
+              .order("round", { ascending: true }),
         propsQuery,
       ]);
 
@@ -181,18 +188,37 @@ function ResultsContent() {
       }
       setRoundMetrics(metricsHistory);
 
-      const scored: ScoredProperty[] = typed.map((p) => ({
-        property: p,
-        score: scoreProperty(model, toFeatureVector(p, stats, commuteById.get(p.id))),
-      }));
-      scored.sort((a, b) => b.score - a.score);
+      let scored: ScoredProperty[];
+      if (isV2 && topIdsParam) {
+        // v2: topIds 순서대로 우선 정렬, 나머지는 뒤에 붙임
+        const topIds = topIdsParam.split(",").filter(Boolean);
+        const topIdSet = new Set(topIds);
+        const propMap = new Map(typed.map((p) => [p.id, p]));
+        const topProps: ScoredProperty[] = topIds
+          .map((id, rank) => {
+            const p = propMap.get(id);
+            if (!p) return null;
+            return { property: p, score: 1 - rank / topIds.length };
+          })
+          .filter((x): x is ScoredProperty => x !== null);
+        const rest: ScoredProperty[] = typed
+          .filter((p) => !topIdSet.has(p.id))
+          .map((p) => ({ property: p, score: 0 }));
+        scored = [...topProps, ...rest];
+      } else {
+        scored = typed.map((p) => ({
+          property: p,
+          score: scoreProperty(model, toFeatureVector(p, stats, commuteById.get(p.id))),
+        }));
+        scored.sort((a, b) => b.score - a.score);
+      }
 
       const minScore = scored[scored.length - 1]?.score ?? 0;
       const maxScore = scored[0]?.score ?? 1;
       const range = maxScore - minScore || 1;
       const normalized = scored.map((s) => ({
         ...s,
-        score: (s.score - minScore) / range,
+        score: isV2 ? s.score : (s.score - minScore) / range,
       }));
 
       const walkResults = await Promise.all(
@@ -344,6 +370,22 @@ function ResultsContent() {
       </div>
 
       <div className="flex-1 px-4 py-5">
+        {/* v2 결과 배너 */}
+        {isV2 && categoryParam && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3"
+          >
+            <p className="text-xs font-semibold text-blue-700">
+              AI 선호 학습 완료 · 선택 카테고리: <span className="font-bold">{categoryParam}</span>
+            </p>
+            <p className="mt-0.5 text-[11px] text-blue-600">
+              계층적 추천 모델 v2가 분석한 맞춤 순위입니다
+            </p>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
