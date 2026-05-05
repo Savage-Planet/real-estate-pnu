@@ -166,25 +166,47 @@ export async function POST(request: Request) {
     let textContent =
       geminiRes?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
+    // 코드 펜스 및 앞뒤 공백 제거
     textContent = textContent
       .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```\s*$/, "")
+      .replace(/\s*```\s*$/,  "")
       .trim();
 
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(textContent);
-    } catch {
-      const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {
-          parsed = { summary: textContent.slice(0, 100) };
-        }
-      } else {
-        parsed = { summary: textContent.slice(0, 100) };
-      }
+    // JSON 파싱 시도 (3단계)
+    let parsed: Record<string, unknown> | null = null;
+
+    // 1) 전체 텍스트 파싱
+    try { parsed = JSON.parse(textContent); } catch { /* ignore */ }
+
+    // 2) 첫 번째 {...} 블록 추출 후 파싱
+    if (!parsed) {
+      const m = textContent.match(/\{[\s\S]*\}/);
+      if (m) { try { parsed = JSON.parse(m[0]); } catch { /* ignore */ } }
+    }
+
+    // 3) 키별 정규식 추출 (최후 수단)
+    if (!parsed) {
+      const extract = (key: string): string | undefined => {
+        const r = new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`, "s");
+        return textContent.match(r)?.[1];
+      };
+      const extractArr = (key: string): string[] => {
+        const r = new RegExp(`"${key}"\\s*:\\s*\\[([^\\]]+)\\]`, "s");
+        const inner = textContent.match(r)?.[1] ?? "";
+        return inner.match(/"([^"]*)"/g)?.map((s) => s.replace(/"/g, "")) ?? [];
+      };
+      parsed = {
+        summary:     extract("summary"),
+        whyTop1:     extractArr("whyTop1"),
+        top1VsTop2:  extractArr("top1VsTop2"),
+        weightShift: extractArr("weightShift"),
+        caveat:      extract("caveat"),
+      };
+    }
+
+    // summary가 JSON 텍스트처럼 보이면 비워서 오염 방지
+    if (typeof parsed.summary === "string" && parsed.summary.trimStart().startsWith("{")) {
+      parsed.summary = undefined;
     }
 
     return NextResponse.json({ ok: true, explanation: parsed });

@@ -280,7 +280,8 @@ function ResultsContent() {
         const initialVal = ini?.value ?? 0;
         return { name: learned.name, initial: initialVal, final: learned.value, delta: learned.value - initialVal };
       });
-      fetchExplanation(normalized, (bld as Building).name, wc, comps.length);
+      // v2: 학습된 가중치 변화가 없으므로 빈 배열 전달, comparisons 수는 0
+      fetchExplanation(normalized, (bld as Building).name, isV2 ? [] : wc, isV2 ? 0 : comps.length);
     }
     init();
   }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);
@@ -528,93 +529,125 @@ function ResultsContent() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="mb-5 rounded-2xl border bg-gradient-to-br from-indigo-50 to-white p-4"
+          className="mb-5 overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-sm"
         >
-          <div className="mb-3 flex items-center justify-between">
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600">
-              <Sparkles className="size-3.5" />
-              AI 분석
+          {/* 헤더 */}
+          <div className="flex items-center justify-between bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
+              <Sparkles className="size-4" />
+              AI 추천 분석
             </p>
             {!explainLoading && (
               <button
                 onClick={() => {
                   if (ranked.length > 0 && building) {
-                    fetchExplanation(ranked, building.name, weightComparison, ranked.length);
+                    fetchExplanation(ranked, building.name, weightComparison, isV2 ? 0 : ranked.length);
                   }
                 }}
-                className="rounded-full p-1 text-gray-400 hover:bg-indigo-100 hover:text-indigo-600 transition"
+                className="rounded-full p-1 text-white/70 hover:bg-white/20 hover:text-white transition"
+                title="다시 분석"
               >
                 <RefreshCw className="size-3.5" />
               </button>
             )}
           </div>
 
-          {explainLoading && (
-            <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-              <Loader2 className="size-4 animate-spin" />
-              분석 중...
-            </div>
-          )}
+          <div className="p-4">
+            {/* 로딩 */}
+            {explainLoading && (
+              <div className="flex items-center gap-2 py-5 text-sm text-gray-400">
+                <Loader2 className="size-4 animate-spin text-indigo-400" />
+                AI가 분석 중입니다…
+              </div>
+            )}
 
-          {explainError && (
-            <p className="text-xs text-red-400">{explainError}</p>
-          )}
+            {/* 에러 */}
+            {explainError && !explainLoading && (
+              <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-500">{explainError}</p>
+            )}
 
-          {explanation && !explainLoading && (
-            <div className="space-y-3 text-sm text-gray-700">
-              {explanation.summary && (
-                <p className="font-semibold text-gray-900">{explanation.summary}</p>
-              )}
+            {/* 결과 */}
+            {explanation && !explainLoading && (() => {
+              const hasSummary    = typeof explanation.summary === "string" && explanation.summary.length > 0;
+              const hasWhyTop1    = Array.isArray(explanation.whyTop1)    && explanation.whyTop1.length > 0;
+              const hasTop1Vs2    = Array.isArray(explanation.top1VsTop2) && explanation.top1VsTop2.length > 0;
+              const hasWeightShift = Array.isArray(explanation.weightShift) && explanation.weightShift.length > 0;
+              const hasContent = hasSummary || hasWhyTop1 || hasTop1Vs2 || hasWeightShift;
 
-              {explanation.whyTop1 && explanation.whyTop1.length > 0 && (
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-indigo-500">1위 선택 이유</p>
-                  <ul className="space-y-0.5 text-xs">
-                    {explanation.whyTop1.map((r, i) => (
-                      <li key={i} className="flex gap-1.5">
-                        <span className="mt-0.5 text-indigo-400">•</span>
-                        <span>{r}</span>
-                      </li>
-                    ))}
-                  </ul>
+              if (!hasContent) return (
+                <p className="py-4 text-center text-xs text-gray-400">분석 결과를 불러오지 못했습니다.</p>
+              );
+
+              return (
+                <div className="space-y-3">
+                  {/* 요약 */}
+                  {hasSummary && (
+                    <div className="rounded-xl bg-indigo-50 px-4 py-3">
+                      <p className="text-sm font-semibold leading-snug text-indigo-900">
+                        {explanation.summary}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* 1위 이유 */}
+                  {hasWhyTop1 && (
+                    <div>
+                      <p className="mb-2 flex items-center gap-1 text-xs font-bold text-gray-500">
+                        <span className="inline-flex size-4 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-600">1</span>
+                        1위 선택 이유
+                      </p>
+                      <ul className="space-y-1.5">
+                        {explanation.whyTop1!.map((r, i) => (
+                          <li key={i} className="flex gap-2 text-xs text-gray-700">
+                            <span className="mt-0.5 shrink-0 text-indigo-400">✓</span>
+                            {r}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 1위 vs 2위 */}
+                  {hasTop1Vs2 && (
+                    <div>
+                      <p className="mb-2 text-xs font-bold text-gray-500">1위 vs 2위 차이</p>
+                      <ul className="space-y-1.5">
+                        {explanation.top1VsTop2!.map((d, i) => (
+                          <li key={i} className="flex gap-2 text-xs text-gray-700">
+                            <span className="mt-0.5 shrink-0 text-violet-400">→</span>
+                            {d}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 가중치 변화 */}
+                  {hasWeightShift && (
+                    <div>
+                      <p className="mb-2 text-xs font-bold text-gray-500">선호도 변화 해석</p>
+                      <ul className="space-y-1.5">
+                        {explanation.weightShift!.map((w, i) => (
+                          <li key={i} className="flex gap-2 text-xs text-gray-700">
+                            <span className="mt-0.5 shrink-0 text-blue-400">↑</span>
+                            {w}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 주의사항 */}
+                  {explanation.caveat && (
+                    <div className="flex gap-2 rounded-xl bg-amber-50 px-3 py-2.5">
+                      <span className="shrink-0 text-amber-500">⚠</span>
+                      <p className="text-[11px] leading-relaxed text-amber-700">{explanation.caveat}</p>
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {explanation.top1VsTop2 && explanation.top1VsTop2.length > 0 && (
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-indigo-500">1위 vs 2위 핵심 차이</p>
-                  <ul className="space-y-0.5 text-xs">
-                    {explanation.top1VsTop2.map((d, i) => (
-                      <li key={i} className="flex gap-1.5">
-                        <span className="mt-0.5 text-indigo-400">•</span>
-                        <span>{d}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {explanation.weightShift && explanation.weightShift.length > 0 && (
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-indigo-500">가중치 변화 해석</p>
-                  <ul className="space-y-0.5 text-xs">
-                    {explanation.weightShift.map((w, i) => (
-                      <li key={i} className="flex gap-1.5">
-                        <span className="mt-0.5 text-indigo-400">•</span>
-                        <span>{w}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {explanation.caveat && (
-                <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
-                  {explanation.caveat}
-                </p>
-              )}
-            </div>
-          )}
+              );
+            })()}
+          </div>
         </motion.div>
 
         {/* Property list */}

@@ -188,12 +188,16 @@ function MicroCompareView({
         routePolylines.push({ path: transitA.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
       if (transitA.gateToBuildingRoute.length >= 2)
         routePolylines.push({ path: transitA.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
+      if (transitA.busPath && transitA.busPath.length >= 2)
+        routePolylines.push({ path: transitA.busPath, color: "#ef4444", weight: 4, opacity: 0.6, style: "dashed" });
     }
     if (transitB) {
       if (transitB.propertyToGateRoute.length >= 2)
         routePolylines.push({ path: transitB.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
       if (transitB.gateToBuildingRoute.length >= 2)
         routePolylines.push({ path: transitB.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
+      if (transitB.busPath && transitB.busPath.length >= 2)
+        routePolylines.push({ path: transitB.busPath, color: "#3b82f6", weight: 4, opacity: 0.6, style: "dashed" });
     }
   }
 
