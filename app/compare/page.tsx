@@ -767,7 +767,12 @@ function CompareContent() {
     setStep(next);
 
     if (next.type === "done") {
-      router.push(resultsUrl(next.topPropertyIds, next.categoryLabel));
+      let url = resultsUrl(next.topPropertyIds, next.categoryLabel);
+      const weights = nav.learnedWeightSummary;
+      if (weights.length > 0) {
+        url += `&v2weights=${encodeURIComponent(JSON.stringify(weights))}`;
+      }
+      router.push(url);
     }
   }, [router, resultsUrl]);
 

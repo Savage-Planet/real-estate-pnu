@@ -100,6 +100,8 @@ function ResultsContent() {
   /** 선택된 편의시설 타입 목록 */
   const amenityTypesParam = params.get("amenityTypes") ?? "";
   const amenityTypes = amenityTypesParam ? amenityTypesParam.split(",").filter(Boolean) : [];
+  /** v2 학습 가중치 (compare page에서 전달) */
+  const v2weightsParam = params.get("v2weights") ?? "";
 
   const [ranked, setRanked] = useState<ScoredProperty[]>([]);
   const [building, setBuilding] = useState<Building | null>(null);
@@ -282,8 +284,15 @@ function ResultsContent() {
         const initialVal = ini?.value ?? 0;
         return { name: learned.name, initial: initialVal, final: learned.value, delta: learned.value - initialVal };
       });
-      // v2: 학습된 가중치 변화가 없으므로 빈 배열 전달, comparisons 수는 0
-      fetchExplanation(normalized, (bld as Building).name, isV2 ? [] : wc, isV2 ? 0 : comps.length);
+      // v2: compare 페이지에서 전달된 v2weights 파라미터 사용
+      let v2wc: Array<{ name: string; initial: number; final: number; delta: number }> = [];
+      if (isV2 && v2weightsParam) {
+        try {
+          const parsed = JSON.parse(decodeURIComponent(v2weightsParam)) as Array<{ name: string; initial: number; final: number }>;
+          v2wc = parsed.map((w) => ({ name: w.name, initial: w.initial, final: w.final, delta: w.final - w.initial }));
+        } catch { /* ignore */ }
+      }
+      fetchExplanation(normalized, (bld as Building).name, isV2 ? v2wc : wc, isV2 ? 0 : comps.length);
     }
     init();
   }, [sessionId, buildingId, minRent, maxRent, minDeposit, maxDeposit, weightsParam]);

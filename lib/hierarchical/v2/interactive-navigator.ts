@@ -562,4 +562,29 @@ export class InteractiveNavigator {
   get selectedCategory(): GroupKey | null {
     return this.selectedGroupKey;
   }
+
+  /** 학습 완료 후 AI 분석용 가중치 요약 (macro 4개 + micro 세부 항목) */
+  get learnedWeightSummary(): Array<{ name: string; initial: number; final: number }> {
+    const result: Array<{ name: string; initial: number; final: number }> = [];
+    const catNames = ["거리", "가격", "안전", "편의성"] as const;
+    const macroMean = getMacroMeanWeight(this.macroPosterior);
+    catNames.forEach((name, i) => {
+      result.push({ name, initial: 0.25, final: macroMean[i] });
+    });
+    if (this.microPosterior && this.selectedGroupKey) {
+      const microMean = getMicroMeanWeight(this.microPosterior);
+      const groupLabels: Record<GroupKey, string[]> = {
+        distance:    ["통학도보", "통학버스", "경사도"],
+        price:       ["월세", "보증금", "관리비"],
+        safety:      ["CCTV", "소음↓", "방범창", "인터폰", "경비원", "카드키"],
+        convenience: ["크기", "방수", "남향", "주차", "엘리베이터", "년식", "옵션"],
+      };
+      const labels = groupLabels[this.selectedGroupKey] ?? [];
+      const initUniform = 1 / microMean.length;
+      microMean.forEach((w, i) => {
+        result.push({ name: labels[i] ?? `특성${i + 1}`, initial: initUniform, final: w });
+      });
+    }
+    return result;
+  }
 }

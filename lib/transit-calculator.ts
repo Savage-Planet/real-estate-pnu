@@ -98,10 +98,22 @@ export async function calcTransitForDisplay(
     }
   }
 
-  // ODsay 경로 조회 실패 또는 생략 시, DB 버스 시간이 있으면 직선 경로를 fallback으로 사용
-  // (Vercel 서버 IP가 ODsay 화이트리스트에 없을 경우를 대비)
+  // 서버 프록시가 실패한 경우 → 브라우저에서 ODsay 직접 호출 시도
+  // (NEXT_PUBLIC 키는 브라우저에서 등록된 도메인으로 호출 가능)
+  if (busPath.length < 2 && typeof window !== "undefined") {
+    try {
+      const { searchBusRoute } = await import("./odsay");
+      const direct = await searchBusRoute(property.lng, property.lat, building.lng, building.lat);
+      if (direct && direct.path.length >= 2) {
+        busMin = direct.busTime > 0 ? direct.busTime : busMin;
+        busPath = direct.path;
+        busAvailable = true;
+      }
+    } catch { /* 직접 호출 실패 시 직선 fallback으로 넘어감 */ }
+  }
+
+  // 모든 시도 실패 시 DB 버스 시간이 있으면 직선 경로를 최후 fallback으로 사용
   if (busPath.length < 2 && busMin > 0) {
-    // 매물 → 정문 근처 중간점 → 건물 의 간단한 3점 경로
     const midLat = (property.lat + building.lat) / 2;
     const midLng = (property.lng + building.lng) / 2;
     busPath = [
