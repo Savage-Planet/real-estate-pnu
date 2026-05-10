@@ -10,12 +10,14 @@ import { NextResponse } from "next/server";
  *       | { ok: false, reason }
  */
 export async function GET(request: Request) {
-  // 브라우저가 /api/bus-route 를 호출할 때 보내는 Referer 헤더를 ODsay에 그대로 전달
-  // (동일-출처 fetch는 Origin 헤더를 보내지 않으므로 Referer를 우선 사용)
+  // ODsay는 등록된 URI와 Referer 헤더를 비교해 인증한다.
+  // Vercel 서버리스 함수는 브라우저의 Referer를 전달하지 않으므로
+  // 프로덕션 도메인을 하드코딩 폴백으로 사용한다.
+  const PROD_ORIGIN = "https://real-estate-pnu-ngyh.vercel.app";
   const incomingReferer =
     request.headers.get("referer") ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/` : "http://localhost:3000/");
-  let originForOdsay = incomingReferer;
+    `${PROD_ORIGIN}/compare`;
+  let originForOdsay = PROD_ORIGIN;
   try { originForOdsay = new URL(incomingReferer).origin; } catch { /* ignore */ }
 
   const { searchParams } = new URL(request.url);
