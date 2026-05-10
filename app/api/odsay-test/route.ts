@@ -21,7 +21,11 @@ export async function GET(request: Request) {
 
   const results: Record<string, unknown> = {
     key_exists: !!key,
-    key_prefix: key ? key.slice(0, 6) + "***" : "(empty)",
+    key_full: key,
+    key_length: key.length,
+    key_has_whitespace: /\s/.test(key),
+    key_first_3: key.slice(0, 3),
+    key_last_3: key.slice(-3),
     incoming_referer_header: request.headers.get("referer"),
     incoming_origin_header: request.headers.get("origin"),
   };
