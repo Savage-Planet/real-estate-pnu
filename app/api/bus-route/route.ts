@@ -10,6 +10,17 @@ import { NextResponse } from "next/server";
  *       | { ok: false, reason }
  */
 export async function GET(request: Request) {
+  // 브라우저의 Origin/Referer를 그대로 ODsay에 전달
+  // (ODsay 개발자센터에 등록된 도메인과 일치해야 인증 통과)
+  const incomingOrigin =
+    request.headers.get("origin") ??
+    (() => {
+      const ref = request.headers.get("referer") ?? "";
+      try { return ref ? new URL(ref).origin : ""; } catch { return ""; }
+    })();
+  const refererForOdsay = incomingOrigin ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
   const { searchParams } = new URL(request.url);
   const sx = searchParams.get("sx");
   const sy = searchParams.get("sy");
@@ -33,9 +44,12 @@ export async function GET(request: Request) {
   url.searchParams.set("apiKey", key);
 
   try {
-    // 순수 서버→ODsay 호출: Referer/Origin 헤더 없이 API 키만으로 인증
     const res = await fetch(url.toString(), {
       signal: AbortSignal.timeout(12_000),
+      headers: {
+        "Referer": refererForOdsay,
+        "Origin": refererForOdsay,
+      },
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
