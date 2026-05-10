@@ -15,7 +15,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: "missing params" }, { status: 400 });
   }
 
-  const key = process.env.NEXT_PUBLIC_ODSAY_KEY ?? "";
+  // Vercel 환경변수 입력 시 자동으로 \r\n 이 붙는 경우가 있어 반드시 trim
+  const key = (process.env.NEXT_PUBLIC_ODSAY_KEY ?? "").trim();
   if (!key) {
     return NextResponse.json({ ok: false, reason: "no_odsay_key" });
   }

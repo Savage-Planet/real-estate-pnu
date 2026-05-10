@@ -1,4 +1,4 @@
-const ODSAY_KEY = process.env.NEXT_PUBLIC_ODSAY_KEY ?? "";
+const ODSAY_KEY = (process.env.NEXT_PUBLIC_ODSAY_KEY ?? "").trim();
 const BASE_URL = "https://api.odsay.com/v1/api";
 
 export interface LatLngPoint {
