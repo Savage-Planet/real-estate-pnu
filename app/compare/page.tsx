@@ -162,6 +162,7 @@ interface PairEnrichState {
   /** 경사도 색상 폴리라인 (A/B 각각의 도보 경로) */
   slopePolylinesA?: KakaoMapPolyline[];
   slopePolylinesB?: KakaoMapPolyline[];
+  amenityDebug?: string;
 }
 
 function buildYearLabel(p: Property): string {
@@ -245,6 +246,7 @@ function MicroCompareView({
     transitA, transitB, densityA, densityB,
     nearestAmenitiesA, nearestAmenitiesB,
     slopePolylinesA, slopePolylinesB,
+    amenityDebug,
   } = enrichState;
 
   const diffLine = buildDiffLine(pA, pB, transitA, transitB);
@@ -475,8 +477,8 @@ function MicroCompareView({
             })}
           </div>
         ) : (
-          <div className="mb-1.5 rounded-xl bg-gray-50/95 px-3 py-1.5 text-center text-[11px] text-gray-500 backdrop-blur-sm">
-            편의시설 정보 로딩 중… 또는 데이터 없음 ({amenityTypes})
+          <div className="mb-1.5 rounded-xl bg-amber-50/95 px-3 py-1.5 text-center text-[11px] text-amber-700 backdrop-blur-sm">
+            편의시설 없음 · 선택: {amenityTypes || "없음"}{amenityDebug ? ` · ${amenityDebug}` : ""}
           </div>
         )}
 
@@ -747,16 +749,21 @@ function CompareContent() {
       // 편의시설 최근접 거리
       let nearestAmenitiesA: NearestAmenity[] | undefined;
       let nearestAmenitiesB: NearestAmenity[] | undefined;
+      let amenityDebug: string | undefined;
       if (amenityTypesParam) {
         try {
           const types = amenityTypesParam.split(",").filter(Boolean);
           const amenities = await loadAmenitiesByTypes(types);
+          amenityDebug = `DB조회:${amenities.length}개`;
           if (amenities.length > 0) {
             const nearestMap = calcNearestAmenities([pA, pB], amenities);
             nearestAmenitiesA = nearestMap.get(pA.id);
             nearestAmenitiesB = nearestMap.get(pB.id);
+            amenityDebug += ` A:${nearestAmenitiesA?.length ?? 0}개 B:${nearestAmenitiesB?.length ?? 0}개`;
           }
-        } catch { /* 편의시설 선택사항 */ }
+        } catch (e) {
+          amenityDebug = `오류:${String(e).slice(0, 80)}`;
+        }
       }
 
       // 경사도 색상 폴리라인 (실패 시 빈 배열)
@@ -810,6 +817,7 @@ function CompareContent() {
         nearestAmenitiesB,
         slopePolylinesA,
         slopePolylinesB,
+        amenityDebug,
       });
     } finally {
       setEnrichLoading(false);

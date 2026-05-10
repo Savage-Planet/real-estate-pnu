@@ -10,16 +10,13 @@ import { NextResponse } from "next/server";
  *       | { ok: false, reason }
  */
 export async function GET(request: Request) {
-  // 브라우저의 Origin/Referer를 그대로 ODsay에 전달
-  // (ODsay 개발자센터에 등록된 도메인과 일치해야 인증 통과)
-  const incomingOrigin =
-    request.headers.get("origin") ??
-    (() => {
-      const ref = request.headers.get("referer") ?? "";
-      try { return ref ? new URL(ref).origin : ""; } catch { return ""; }
-    })();
-  const refererForOdsay = incomingOrigin ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  // 브라우저가 /api/bus-route 를 호출할 때 보내는 Referer 헤더를 ODsay에 그대로 전달
+  // (동일-출처 fetch는 Origin 헤더를 보내지 않으므로 Referer를 우선 사용)
+  const incomingReferer =
+    request.headers.get("referer") ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/` : "http://localhost:3000/");
+  let originForOdsay = incomingReferer;
+  try { originForOdsay = new URL(incomingReferer).origin; } catch { /* ignore */ }
 
   const { searchParams } = new URL(request.url);
   const sx = searchParams.get("sx");
@@ -47,8 +44,8 @@ export async function GET(request: Request) {
     const res = await fetch(url.toString(), {
       signal: AbortSignal.timeout(12_000),
       headers: {
-        "Referer": refererForOdsay,
-        "Origin": refererForOdsay,
+        "Referer": incomingReferer,
+        "Origin": originForOdsay,
       },
     });
     if (!res.ok) {
