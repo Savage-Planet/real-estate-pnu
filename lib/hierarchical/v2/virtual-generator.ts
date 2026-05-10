@@ -5,12 +5,19 @@
  *
  * 핵심 아이디어:
  *   실제 매물 없이 가상(합성) 아이템을 생성해 최대 정보량 질의를 합성한다.
- *   쌍 (A, B) 선택 기준:
- *     argmax P(A≻B) · P(B≻A)  ≡  argmin |P(A≻B) - 0.5|
- *   → 현재 posterior에서 가장 불확실한 쌍 = 선호 공간을 절반으로 가르는 쌍
+ *
+ * Volume Removal (Sadigh 2017) 적용 방법:
+ *   각 비교 쌍 (A, B)의 차이 벡터 d = vA - vB 가 현재 posterior 불확실 방향과
+ *   정렬될수록 가중치 공간(version space)을 절반으로 가르는 hyperplane에 가까워진다.
+ *
+ *   trade-off pair 설계 원칙:
+ *     - 비교하려는 두 카테고리 i, j 에서 item A = (HIGH_i, LOW_j, MID 나머지),
+ *       item B = (LOW_i, HIGH_j, MID 나머지)로 설정
+ *     - 나머지 차원은 동일(MID)하여 비교 외 노이즈 제거
+ *     - 차이 벡터 d = [±0.9, ±0.9, 0, 0] → 단순 아키타입(±0.5) 대비 2배 분별력
  *
  * 두 가지 virtual item 유형:
- *   1. Category Archetypes (매크로 학습용): 한 카테고리만 극대, 나머지 중간값
+ *   1. Trade-off Archetypes (매크로 학습 C(4,2)=6쌍용): 순수 두 카테고리 대결
  *   2. Sub-feature Archetypes (마이크로 학습용): 카테고리 내 특정 dim만 극대
  */
 
@@ -41,43 +48,73 @@ function sigmoid(x: number): number {
 }
 
 // ──────────────────────────────────────────────────────────
-// 카테고리 아키타입 생성 (매크로 학습용)
+// Trade-off 아키타입 생성 (매크로 학습용, Sadigh 2017 volume removal)
 // ──────────────────────────────────────────────────────────
 
 /**
- * 각 카테고리가 극대이고 나머지는 중간값(0.5)인 "순수 아키타입" 8개 생성.
- * - 단일 카테고리 4개: [1.0, 0.5, 0.5, 0.5] 형태
- * - 교차 혼합 4개: [0.9, 0.9, 0.3, 0.3] 등 → 비슷한 두 카테고리 간 분별력 확보
+ * C(4,2)=6 쌍에 대해 각각 순수 trade-off 아이템 쌍을 생성한다.
+ *
+ * 각 쌍 (i, j):
+ *   - prefer_i: [i=0.95, j=0.05, 나머지=0.50]  (i 카테고리 극대, j 극소)
+ *   - prefer_j: [i=0.05, j=0.95, 나머지=0.50]  (j 카테고리 극대, i 극소)
+ *
+ * 왜 HIGH=0.95 / LOW=0.05 / MID=0.50 인가?
+ *   - 차이 벡터 |d_i| = 0.9 → 단순 아키타입(0.5 차이)의 1.8배 분별력
+ *   - MID=0.50 는 비교 대상 외 차원의 noise를 제거
+ *   - 0.05/0.95 는 현실 범위를 벗어나지 않아 construct feasibility 유지
  */
+const HIGH = 0.95;
+const LOW = 0.05;
+const MID = 0.50;
+
 export function generateCategoryArchetypes(): VirtualItem[] {
   const LABELS = ["거리", "가격", "안전", "편의성"];
-  const HIGH = 1.0;
-  const MID = 0.5;
-  const LOW = 0.1;
+  const items: VirtualItem[] = [];
 
-  // 단일 카테고리 극대 아이템
-  const single: VirtualItem[] = Array.from({ length: NUM_CATEGORIES }, (_, i) => {
+  // 단일 카테고리 아키타입: legacy 호환 + interactive-navigator pickNextMacroPair 에서 직접 사용
+  for (let i = 0; i < NUM_CATEGORIES; i++) {
     const cv = Array(NUM_CATEGORIES).fill(MID) as CategoryVector;
     cv[i] = HIGH;
-    return { id: `archetype_single_${i}`, categoryVector: cv, label: `${LABELS[i]}중심형` };
-  });
+    items.push({ id: `archetype_single_${i}`, categoryVector: cv, label: `${LABELS[i]}중심형` });
+  }
 
-  // 두 카테고리 혼합 아이템 (C(4,2)=6개)
-  const pairs: VirtualItem[] = [];
+  // Trade-off 아이템: C(4,2) × 2 = 12개
   for (let i = 0; i < NUM_CATEGORIES; i++) {
     for (let j = i + 1; j < NUM_CATEGORIES; j++) {
-      const cv = Array(NUM_CATEGORIES).fill(LOW) as CategoryVector;
-      cv[i] = 0.9;
-      cv[j] = 0.9;
-      pairs.push({
-        id: `archetype_pair_${i}_${j}`,
-        categoryVector: cv,
-        label: `${LABELS[i]}+${LABELS[j]}형`,
+      const cvA = Array(NUM_CATEGORIES).fill(MID) as CategoryVector;
+      cvA[i] = HIGH; cvA[j] = LOW;
+      items.push({
+        id: `tradeoff_${i}_${j}_a`,
+        categoryVector: cvA,
+        label: `${LABELS[i]}↑${LABELS[j]}↓형`,
+      });
+
+      const cvB = Array(NUM_CATEGORIES).fill(MID) as CategoryVector;
+      cvB[i] = LOW; cvB[j] = HIGH;
+      items.push({
+        id: `tradeoff_${i}_${j}_b`,
+        categoryVector: cvB,
+        label: `${LABELS[i]}↓${LABELS[j]}↑형`,
       });
     }
   }
 
-  return [...single, ...pairs];
+  return items;
+}
+
+/**
+ * 6 고정 쌍에 대한 trade-off 아이템 쌍을 반환한다.
+ * pickNextMacroPair() 에서 직접 사용.
+ * 반환값: [pair 인덱스 → [prefer_i 아이템, prefer_j 아이템]] 배열 (6개)
+ */
+export function getTradeOffPairs(pool: VirtualItem[]): Array<[VirtualItem, VirtualItem]> {
+  const PAIRS: [number, number][] = [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+  return PAIRS.map(([i, j]) => {
+    const a = pool.find((v) => v.id === `tradeoff_${i}_${j}_a`);
+    const b = pool.find((v) => v.id === `tradeoff_${i}_${j}_b`);
+    if (!a || !b) throw new Error(`trade-off pair ${i}_${j} not found`);
+    return [a, b];
+  });
 }
 
 // ──────────────────────────────────────────────────────────

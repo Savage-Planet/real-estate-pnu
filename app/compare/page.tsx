@@ -22,6 +22,12 @@ import {
   type NearestAmenity,
 } from "@/lib/amenities";
 import {
+  samplePoints,
+  fetchRouteElevations,
+  calcSlopePolylines,
+  SLOPE_LEVELS,
+} from "@/lib/elevation";
+import {
   InteractiveNavigator,
   type NavigatorStep,
   type MacroStep,
@@ -153,6 +159,9 @@ interface PairEnrichState {
   densityB?: number;
   nearestAmenitiesA?: NearestAmenity[];
   nearestAmenitiesB?: NearestAmenity[];
+  /** 경사도 색상 폴리라인 (A/B 각각의 도보 경로) */
+  slopePolylinesA?: KakaoMapPolyline[];
+  slopePolylinesB?: KakaoMapPolyline[];
 }
 
 function buildYearLabel(p: Property): string {
@@ -224,9 +233,14 @@ function MicroCompareView({
   const [showRoutes, setShowRoutes] = useState(false);
 
   const { propertyA: pA, propertyB: pB } = step;
-  const { transitA, transitB, densityA, densityB, nearestAmenitiesA, nearestAmenitiesB } = enrichState;
+  const {
+    transitA, transitB, densityA, densityB,
+    nearestAmenitiesA, nearestAmenitiesB,
+    slopePolylinesA, slopePolylinesB,
+  } = enrichState;
 
   const diffLine = buildDiffLine(pA, pB, transitA, transitB);
+  const hasSlopeData = (slopePolylinesA && slopePolylinesA.length > 0) || (slopePolylinesB && slopePolylinesB.length > 0);
 
   const allMarkers: KakaoMapMarker[] = [
     { lat: pA.lat, lng: pA.lng, label: `A: ${pA.monthly_rent}만`, color: "red" },
@@ -239,18 +253,28 @@ function MicroCompareView({
   const routePolylines: KakaoMapPolyline[] = [];
   if (showRoutes) {
     if (transitA) {
-      if (transitA.propertyToGateRoute.length >= 2)
-        routePolylines.push({ path: transitA.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
-      if (transitA.gateToBuildingRoute.length >= 2)
-        routePolylines.push({ path: transitA.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
+      // A 도보: 경사도 색상 우선, 없으면 단색
+      if (slopePolylinesA && slopePolylinesA.length > 0) {
+        routePolylines.push(...slopePolylinesA);
+      } else {
+        if (transitA.propertyToGateRoute.length >= 2)
+          routePolylines.push({ path: transitA.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
+        if (transitA.gateToBuildingRoute.length >= 2)
+          routePolylines.push({ path: transitA.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
+      }
       if (transitA.busPath && transitA.busPath.length >= 2)
         routePolylines.push({ path: transitA.busPath, color: "#ef4444", weight: 4, opacity: 0.6, style: "dashed" });
     }
     if (transitB) {
-      if (transitB.propertyToGateRoute.length >= 2)
-        routePolylines.push({ path: transitB.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
-      if (transitB.gateToBuildingRoute.length >= 2)
-        routePolylines.push({ path: transitB.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
+      // B 도보: 경사도 색상 우선, 없으면 단색
+      if (slopePolylinesB && slopePolylinesB.length > 0) {
+        routePolylines.push(...slopePolylinesB);
+      } else {
+        if (transitB.propertyToGateRoute.length >= 2)
+          routePolylines.push({ path: transitB.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
+        if (transitB.gateToBuildingRoute.length >= 2)
+          routePolylines.push({ path: transitB.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
+      }
       if (transitB.busPath && transitB.busPath.length >= 2)
         routePolylines.push({ path: transitB.busPath, color: "#3b82f6", weight: 4, opacity: 0.6, style: "dashed" });
     }
@@ -292,6 +316,19 @@ function MicroCompareView({
         autoFit
         fitPadding={120}
       />
+
+      {/* 경사도 범례 (경로 표시 + 데이터 있을 때만) */}
+      {showRoutes && hasSlopeData && (
+        <div className="absolute left-3 top-[88px] z-10 rounded-xl bg-white/90 px-2.5 py-2 text-[10px] shadow backdrop-blur-sm">
+          <p className="mb-1.5 font-bold text-gray-600">경사도</p>
+          {SLOPE_LEVELS.map((lv) => (
+            <div key={lv.color} className="flex items-center gap-1.5 leading-tight">
+              <span className="inline-block h-2 w-5 rounded-sm" style={{ background: lv.color }} />
+              <span className="text-gray-600">{lv.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 하단 */}
       <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4">
@@ -605,6 +642,34 @@ function CompareContent() {
         } catch { /* 편의시설 선택사항 */ }
       }
 
+      // 경사도 색상 폴리라인 (실패 시 빈 배열)
+      let slopePolylinesA: KakaoMapPolyline[] | undefined;
+      let slopePolylinesB: KakaoMapPolyline[] | undefined;
+      try {
+        const buildFullRoute = (t: TransitResult) => [
+          ...t.propertyToGateRoute,
+          ...t.gateToBuildingRoute,
+        ];
+        const [slA, slB] = await Promise.all([
+          transitA ? (async () => {
+            const route = buildFullRoute(transitA);
+            if (route.length < 2) return undefined;
+            const sampled = samplePoints(route);
+            const elevs = await fetchRouteElevations(sampled);
+            return calcSlopePolylines(sampled, elevs, 5);
+          })() : Promise.resolve(undefined),
+          transitB ? (async () => {
+            const route = buildFullRoute(transitB);
+            if (route.length < 2) return undefined;
+            const sampled = samplePoints(route);
+            const elevs = await fetchRouteElevations(sampled);
+            return calcSlopePolylines(sampled, elevs, 5);
+          })() : Promise.resolve(undefined),
+        ]);
+        slopePolylinesA = slA ?? undefined;
+        slopePolylinesB = slB ?? undefined;
+      } catch { /* 경사도 선택사항 — 실패해도 단색 경로로 fallback */ }
+
       setEnrichState({
         transitA: transitA ?? undefined,
         transitB: transitB ?? undefined,
@@ -614,6 +679,8 @@ function CompareContent() {
         densityB,
         nearestAmenitiesA,
         nearestAmenitiesB,
+        slopePolylinesA,
+        slopePolylinesB,
       });
     } finally {
       setEnrichLoading(false);

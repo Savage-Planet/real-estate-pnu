@@ -35,7 +35,7 @@ import {
   macroPosteriorConcentration,
 } from "./macro-learner";
 import type { VirtualItem } from "./virtual-generator";
-import { generateCategoryArchetypes } from "./virtual-generator";
+import { generateCategoryArchetypes, getTradeOffPairs } from "./virtual-generator";
 import { haversine } from "@/lib/geo";
 import type { MicroPosterior } from "./micro-learner";
 import {
@@ -57,66 +57,93 @@ interface VirtualItemMeta {
   tags: string[];
 }
 
+/**
+ * Trade-off 아이템 메타 (Sadigh 2017 volume removal 기반 pure trade-off 쌍)
+ *
+ * 네이밍: tradeoff_{i}_{j}_{a|b}
+ *   a = category i 극대, j 극소 (i를 선호할 때 선택)
+ *   b = category j 극대, i 극소 (j를 선호할 때 선택)
+ *
+ * 카테고리 인덱스: 0=거리, 1=가격, 2=안전, 3=편의
+ */
 const VIRTUAL_META: Record<string, VirtualItemMeta> = {
-  archetype_single_0: {
+  // ── [0,1] 거리 vs 가격 ──
+  tradeoff_0_1_a: {
     icon: "🚶",
-    title: "거리 우선형",
-    desc: "캠퍼스까지 도보 5분 거리",
-    tags: ["통학 최단", "경사 완만"],
+    title: "캠퍼스 바로 앞",
+    desc: "도보 5분 이내, 월세는 높음",
+    tags: ["통학 최단", "가격 타협"],
   },
-  archetype_single_1: {
+  tradeoff_0_1_b: {
     icon: "💰",
-    title: "가격 우선형",
-    desc: "월세·관리비 최저가",
-    tags: ["저렴한 월세", "낮은 관리비", "저보증금"],
+    title: "월세 최저가",
+    desc: "매우 저렴, 통학 거리는 멂",
+    tags: ["가장 저렴", "통학 멀어도 OK"],
   },
-  archetype_single_2: {
+  // ── [0,2] 거리 vs 안전 ──
+  tradeoff_0_2_a: {
+    icon: "🚶",
+    title: "최단 거리, 보안 약함",
+    desc: "캠퍼스 가깝지만 보안 시설 부족",
+    tags: ["통학 최단", "보안 미흡"],
+  },
+  tradeoff_0_2_b: {
     icon: "🔒",
-    title: "안전 우선형",
-    desc: "보안 시설 완비",
-    tags: ["CCTV", "방범창", "인터폰"],
+    title: "안전 완비, 거리 있음",
+    desc: "CCTV·방범창 완비, 통학 거리 있음",
+    tags: ["보안 완벽", "통학 다소 멂"],
   },
-  archetype_single_3: {
+  // ── [0,3] 거리 vs 편의 ──
+  tradeoff_0_3_a: {
+    icon: "🚶",
+    title: "가깝지만 시설 부족",
+    desc: "캠퍼스 근거리, 방·시설은 평범",
+    tags: ["통학 편리", "시설 평범"],
+  },
+  tradeoff_0_3_b: {
     icon: "✨",
-    title: "편의 우선형",
-    desc: "시설·공간 최상급",
-    tags: ["신축", "넓은 방", "주차·엘리베이터"],
+    title: "넓고 쾌적, 거리 있음",
+    desc: "넓은 방·신축·엘리베이터, 통학 거리 있음",
+    tags: ["넓은 방", "통학 다소 멂"],
   },
-  archetype_pair_0_1: {
-    icon: "🎯",
-    title: "거리+가격형",
-    desc: "저렴하고 캠퍼스 근거리",
-    tags: ["저렴한 월세", "통학 편리"],
+  // ── [1,2] 가격 vs 안전 ──
+  tradeoff_1_2_a: {
+    icon: "💰",
+    title: "저렴하지만 보안 약함",
+    desc: "월세 매우 낮음, 보안 시설 미흡",
+    tags: ["최저가", "보안 미흡"],
   },
-  archetype_pair_0_2: {
-    icon: "🛡️",
-    title: "거리+안전형",
-    desc: "가깝고 안전한 매물",
-    tags: ["통학 편리", "보안 양호"],
+  tradeoff_1_2_b: {
+    icon: "🔒",
+    title: "안전 완비, 가격 있음",
+    desc: "보안 시설 완벽, 월세는 비쌈",
+    tags: ["CCTV·방범창", "가격 높음"],
   },
-  archetype_pair_0_3: {
-    icon: "🌟",
-    title: "거리+편의형",
-    desc: "가깝고 시설 좋은 매물",
-    tags: ["통학 편리", "좋은 시설"],
+  // ── [1,3] 가격 vs 편의 ──
+  tradeoff_1_3_a: {
+    icon: "💰",
+    title: "저렴하지만 시설 적음",
+    desc: "월세 매우 낮음, 방·시설 평범",
+    tags: ["가장 저렴", "시설 평범"],
   },
-  archetype_pair_1_2: {
-    icon: "🏠",
-    title: "가격+안전형",
-    desc: "저렴하고 안전한 매물",
-    tags: ["저렴한 월세", "보안 양호"],
+  tradeoff_1_3_b: {
+    icon: "✨",
+    title: "시설 최상급, 가격 있음",
+    desc: "신축·넓은 방·엘리베이터, 월세 높음",
+    tags: ["넓은 방", "가격 높음"],
   },
-  archetype_pair_1_3: {
-    icon: "💎",
-    title: "가격+편의형",
-    desc: "저렴하고 시설 좋은 매물",
-    tags: ["저렴한 월세", "좋은 시설"],
+  // ── [2,3] 안전 vs 편의 ──
+  tradeoff_2_3_a: {
+    icon: "🔒",
+    title: "안전 완비, 시설 평범",
+    desc: "보안 시설 완벽, 방·면적은 평범",
+    tags: ["보안 완벽", "시설 평범"],
   },
-  archetype_pair_2_3: {
-    icon: "🏰",
-    title: "안전+편의형",
-    desc: "안전하고 쾌적한 매물",
-    tags: ["보안 양호", "좋은 시설"],
+  tradeoff_2_3_b: {
+    icon: "✨",
+    title: "넓고 쾌적, 보안 약함",
+    desc: "넓은 방·신축, 보안 시설 미흡",
+    tags: ["넓은 방", "보안 미흡"],
   },
 };
 
@@ -207,6 +234,8 @@ export class InteractiveNavigator {
   // ── Macro 상태 ──
   private macroPosterior: MacroPosterior;
   private readonly virtualPool: VirtualItem[];
+  /** trade-off 쌍 배열 (6개, Sadigh 2017 volume removal) */
+  private readonly tradeOffPairs: Array<[VirtualItem, VirtualItem]>;
   private macroRound = 0;
   private currentMacroA: VirtualItem | null = null;
   private currentMacroB: VirtualItem | null = null;
@@ -261,6 +290,7 @@ export class InteractiveNavigator {
         : createMacroPosterior();
 
     this.virtualPool = generateCategoryArchetypes();
+    this.tradeOffPairs = getTradeOffPairs(this.virtualPool);
     this.pickNextMacroPair();
   }
 
@@ -350,25 +380,20 @@ export class InteractiveNavigator {
     }
   }
 
-  /** 4C2 고정 순서로 단일 아키타입 쌍을 순회 */
+  /**
+   * 4C2 고정 순서로 trade-off 쌍을 순회 (Sadigh 2017 volume removal).
+   * 각 쌍은 두 카테고리의 극단 대비 아이템으로 구성되어
+   * 단순 단일-아키타입 비교 대비 1.8배 더 정확한 선호 분리 효과.
+   */
   private pickNextMacroPair(): void {
-    const pair = MACRO_FIXED_PAIRS[this.macroPairCursor];
-    if (!pair) {
+    const toPair = this.tradeOffPairs[this.macroPairCursor];
+    if (!toPair) {
       this.currentMacroA = null;
       this.currentMacroB = null;
       return;
     }
-    // virtualPool의 앞 4개가 archetype_single_0~3
-    const singlePool = this.virtualPool.filter((v) => v.id.startsWith("archetype_single_"));
-    const vA = singlePool[pair[0]];
-    const vB = singlePool[pair[1]];
-    if (!vA || !vB) {
-      this.currentMacroA = null;
-      this.currentMacroB = null;
-      return;
-    }
-    this.currentMacroA = vA;
-    this.currentMacroB = vB;
+    this.currentMacroA = toPair[0];
+    this.currentMacroB = toPair[1];
   }
 
   // ──────────────────────────────────────────────────────────
