@@ -213,7 +213,7 @@ function ResultsContent() {
           .filter((x): x is ScoredProperty => x !== null);
         const rest: ScoredProperty[] = typed
           .filter((p) => !topIdSet.has(p.id))
-          .map((p) => ({ property: p, score: 0 }));
+          .map((p, i) => ({ property: p, score: Math.max(0, 0.3 - i * 0.01) }));
         scored = [...topProps, ...rest];
       } else {
         scored = typed.map((p) => ({

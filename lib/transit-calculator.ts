@@ -6,7 +6,7 @@ import type { Property, Building } from "@/types";
 export type { LatLngPoint };
 
 /** DB 도보(매물→문+문→건물)가 이 분 이상일 때만 버스 API 호출·경로 표시 */
-export const DB_WALK_MIN_FOR_BUS_API = 18;
+export const DB_WALK_MIN_FOR_BUS_API = 5;
 
 export interface TransitResult {
   walkMin: number;

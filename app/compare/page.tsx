@@ -17,6 +17,11 @@ import {
 import type { Property, Building, StreetLight } from "@/types";
 import { formatCompareError, logCompare, logCompareError, withTimeout } from "@/lib/compare-log";
 import {
+  loadAmenitiesByTypes,
+  calcNearestAmenities,
+  type NearestAmenity,
+} from "@/lib/amenities";
+import {
   InteractiveNavigator,
   type NavigatorStep,
   type MacroStep,
@@ -146,6 +151,8 @@ interface PairEnrichState {
   lightsB?: StreetLight[];
   densityA?: number;
   densityB?: number;
+  nearestAmenitiesA?: NearestAmenity[];
+  nearestAmenitiesB?: NearestAmenity[];
 }
 
 function buildYearLabel(p: Property): string {
@@ -154,6 +161,52 @@ function buildYearLabel(p: Property): string {
   if (p.within_15y) return "15년 이내";
   if (p.within_25y) return "25년 이내";
   return "25년 초과";
+}
+
+/** A와 B의 핵심 차이를 1~2개 뽑아 한줄로 반환 */
+function buildDiffLine(
+  pA: Property,
+  pB: Property,
+  transitA?: TransitResult,
+  transitB?: TransitResult,
+): string {
+  const aStrengths: string[] = [];
+  const bStrengths: string[] = [];
+
+  // 가격 (월세 기준, 전세는 보증금)
+  const priceA = pA.trade_type === "전세" ? pA.deposit : pA.monthly_rent;
+  const priceB = pB.trade_type === "전세" ? pB.deposit : pB.monthly_rent;
+  if (priceA < priceB - 3) aStrengths.push("가격 유리");
+  else if (priceB < priceA - 3) bStrengths.push("가격 유리");
+
+  // 도보 거리
+  const walkA = transitA?.walkMin ?? pA.walk_to_gate_min ?? 999;
+  const walkB = transitB?.walkMin ?? pB.walk_to_gate_min ?? 999;
+  if (walkA < walkB - 3) aStrengths.push("가까움");
+  else if (walkB < walkA - 3) bStrengths.push("가까움");
+
+  // 면적
+  if (pA.exclusive_area > pB.exclusive_area + 5) aStrengths.push("넓은 방");
+  else if (pB.exclusive_area > pA.exclusive_area + 5) bStrengths.push("넓은 방");
+
+  // 보안 (CCTV / 인터폰 / 방범창)
+  const secA = (pA.has_cctv ? 1 : 0) + (pA.has_intercom ? 1 : 0) + (pA.has_entrance_security ? 1 : 0);
+  const secB = (pB.has_cctv ? 1 : 0) + (pB.has_intercom ? 1 : 0) + (pB.has_entrance_security ? 1 : 0);
+  if (secA > secB + 1) aStrengths.push("보안 강점");
+  else if (secB > secA + 1) bStrengths.push("보안 강점");
+
+  // 엘리베이터
+  if (pA.has_elevator && !pB.has_elevator) aStrengths.push("엘리베이터");
+  else if (pB.has_elevator && !pA.has_elevator) bStrengths.push("엘리베이터");
+
+  // 상위 2개만 사용
+  const aTop = aStrengths.slice(0, 2).join("·");
+  const bTop = bStrengths.slice(0, 2).join("·");
+
+  if (!aTop && !bTop) return "비슷한 조건의 매물입니다";
+  if (!bTop) return `A: ${aTop}이 유리`;
+  if (!aTop) return `B: ${bTop}이 유리`;
+  return `A: ${aTop}   B: ${bTop}`;
 }
 
 function MicroCompareView({
@@ -171,7 +224,9 @@ function MicroCompareView({
   const [showRoutes, setShowRoutes] = useState(false);
 
   const { propertyA: pA, propertyB: pB } = step;
-  const { transitA, transitB, densityA, densityB } = enrichState;
+  const { transitA, transitB, densityA, densityB, nearestAmenitiesA, nearestAmenitiesB } = enrichState;
+
+  const diffLine = buildDiffLine(pA, pB, transitA, transitB);
 
   const allMarkers: KakaoMapMarker[] = [
     { lat: pA.lat, lng: pA.lng, label: `A: ${pA.monthly_rent}만`, color: "red" },
@@ -221,6 +276,10 @@ function MicroCompareView({
             transition={{ duration: 0.4 }}
           />
         </div>
+        {/* A/B 핵심 차이 한줄 */}
+        <div className="mt-1.5 rounded-lg bg-white/80 px-3 py-1 text-center text-[11px] font-medium text-gray-600 backdrop-blur-sm">
+          {diffLine}
+        </div>
       </div>
 
       {/* 지도 */}
@@ -260,6 +319,7 @@ function MicroCompareView({
             const p = side === "a" ? pA : pB;
             const transit = side === "a" ? transitA : transitB;
             const color = side === "a" ? "red" : "blue";
+            const nearestAmenities = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
             return (
               <div key={side} className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
                 <span className={`mb-1 text-xs font-bold text-${color}-500`}>{side.toUpperCase()}</span>
@@ -275,6 +335,18 @@ function MicroCompareView({
                     도보 {transit.walkMin}분
                     {transit.busMin > 0 && ` · 버스 ${transit.busMin}분`}
                   </p>
+                )}
+                {nearestAmenities && nearestAmenities.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {nearestAmenities.slice(0, 2).map((a) => (
+                      <span
+                        key={a.type}
+                        className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600"
+                      >
+                        {a.icon} {Math.round(a.distM)}m
+                      </span>
+                    ))}
+                  </div>
                 )}
                 <Button
                   size="sm"
@@ -489,7 +561,7 @@ function CompareContent() {
     init();
   }, [buildingId, minRent, maxRent, minDeposit, maxDeposit]);
 
-  // ── Micro 단계에서 매물 pair enrich (경로, 가로등) ──
+  // ── Micro 단계에서 매물 pair enrich (경로, 가로등, 편의시설) ──
   const enrichMicroPair = useCallback(async (pA: Property, pB: Property, bld: Building) => {
     setEnrichLoading(true);
     setEnrichState({});
@@ -518,11 +590,35 @@ function CompareContent() {
         }
       } catch { /* 가로등 선택사항 */ }
 
-      setEnrichState({ transitA: transitA ?? undefined, transitB: transitB ?? undefined, lightsA, lightsB, densityA, densityB });
+      // 편의시설 최근접 거리
+      let nearestAmenitiesA: NearestAmenity[] | undefined;
+      let nearestAmenitiesB: NearestAmenity[] | undefined;
+      if (amenityTypesParam) {
+        try {
+          const types = amenityTypesParam.split(",").filter(Boolean);
+          const amenities = await loadAmenitiesByTypes(types);
+          if (amenities.length > 0) {
+            const nearestMap = calcNearestAmenities([pA, pB], amenities);
+            nearestAmenitiesA = nearestMap.get(pA.id);
+            nearestAmenitiesB = nearestMap.get(pB.id);
+          }
+        } catch { /* 편의시설 선택사항 */ }
+      }
+
+      setEnrichState({
+        transitA: transitA ?? undefined,
+        transitB: transitB ?? undefined,
+        lightsA,
+        lightsB,
+        densityA,
+        densityB,
+        nearestAmenitiesA,
+        nearestAmenitiesB,
+      });
     } finally {
       setEnrichLoading(false);
     }
-  }, []);
+  }, [amenityTypesParam]);
 
   // ── Micro 스텝 변경 시 enrich 실행 ──
   useEffect(() => {

@@ -30,13 +30,13 @@ import {
   createMacroPosteriorWithPrior,
   updateMacroPosterior,
   getMacroMeanWeight,
-  isMacroConverged,
   topCategoryIdx,
   secondCategoryIdx,
   macroPosteriorConcentration,
 } from "./macro-learner";
 import type { VirtualItem } from "./virtual-generator";
-import { generateCategoryArchetypes, selectMostInfoPair } from "./virtual-generator";
+import { generateCategoryArchetypes } from "./virtual-generator";
+import { haversine } from "@/lib/geo";
 import type { MicroPosterior } from "./micro-learner";
 import {
   createMicroPosterior,
@@ -179,10 +179,17 @@ const CATEGORY_ICONS: Record<string, string> = {
 // InteractiveNavigator 클래스
 // ──────────────────────────────────────────────────────────
 
-const MAX_MACRO_ROUNDS = 10;
-const MAX_MICRO_ROUNDS = 22;
-const MICRO_CONCENTRATION_THRESHOLD = 0.92;
+/** 4C2 = 6쌍 고정 순회 */
+const MACRO_FIXED_PAIRS: [number, number][] = [
+  [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3],
+];
+const MAX_MACRO_ROUNDS = MACRO_FIXED_PAIRS.length; // 6
+const MAX_MICRO_ROUNDS = 8;
+const MICRO_CONCENTRATION_THRESHOLD = 0.88;
 const TOP_K = 10;
+/** 캠퍼스 정문 기준 micro pool 최대 반경 (m) */
+const MICRO_MAX_DIST_M = 2000;
+const PNU_GATE = { lat: 35.2316, lng: 129.0840 };
 
 /** dot product */
 function dot(a: number[], b: number[]): number {
@@ -203,6 +210,8 @@ export class InteractiveNavigator {
   private macroRound = 0;
   private currentMacroA: VirtualItem | null = null;
   private currentMacroB: VirtualItem | null = null;
+  /** 4C2 고정 쌍 인덱스 커서 */
+  private macroPairCursor = 0;
 
   // ── Micro 상태 ──
   private microPosterior: MicroPosterior | null = null;
@@ -332,25 +341,34 @@ export class InteractiveNavigator {
       loserItem.categoryVector,
     );
     this.macroRound++;
+    this.macroPairCursor++;
 
-    if (isMacroConverged(this.macroPosterior, MAX_MACRO_ROUNDS)) {
+    if (this.macroPairCursor >= MACRO_FIXED_PAIRS.length) {
       this.startMicro();
     } else {
       this.pickNextMacroPair();
     }
   }
 
+  /** 4C2 고정 순서로 단일 아키타입 쌍을 순회 */
   private pickNextMacroPair(): void {
-    try {
-      const [vA, vB] = selectMostInfoPair(this.virtualPool, this.macroPosterior);
-      const pairKey = `${vA.id}__${vB.id}`;
-      this.macroPosterior.usedPairKeys.add(pairKey);
-      this.currentMacroA = vA;
-      this.currentMacroB = vB;
-    } catch {
+    const pair = MACRO_FIXED_PAIRS[this.macroPairCursor];
+    if (!pair) {
       this.currentMacroA = null;
       this.currentMacroB = null;
+      return;
     }
+    // virtualPool의 앞 4개가 archetype_single_0~3
+    const singlePool = this.virtualPool.filter((v) => v.id.startsWith("archetype_single_"));
+    const vA = singlePool[pair[0]];
+    const vB = singlePool[pair[1]];
+    if (!vA || !vB) {
+      this.currentMacroA = null;
+      this.currentMacroB = null;
+      return;
+    }
+    this.currentMacroA = vA;
+    this.currentMacroB = vB;
   }
 
   // ──────────────────────────────────────────────────────────
@@ -372,7 +390,12 @@ export class InteractiveNavigator {
         locationMap.set(key, p);
       }
     }
-    this.locationRepIds = new Set(Array.from(locationMap.values()).map((p) => p.id));
+    // 캠퍼스 정문 2km 초과 매물 제외 (원거리 매물 비교 방지)
+    this.locationRepIds = new Set(
+      Array.from(locationMap.values())
+        .filter((p) => haversine(p.lat, p.lng, PNU_GATE.lat, PNU_GATE.lng) <= MICRO_MAX_DIST_M)
+        .map((p) => p.id),
+    );
 
     // Sub-vector 캐시 초기화 (대표 매물만)
     this.subVecCache.clear();
