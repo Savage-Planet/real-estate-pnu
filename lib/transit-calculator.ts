@@ -73,24 +73,28 @@ export async function calcTransitForDisplay(
     };
   }
 
-  let busMin = 0;
+  // DB에 저장된 버스 시간을 fallback으로 먼저 세팅
+  // → ODsay 실패해도 카드에 버스 시간 + 버스 버튼은 항상 표시
+  const dbBusMin = busTotalMinutesFromDb(property, building);
+  let busMin = dbBusMin ?? 0;
   let busPath: LatLngPoint[] = [];
-  let busAvailable: boolean | null = null;
+  let busAvailable: boolean | null = busMin > 0 ? false : null;
 
+  // 도보 임계 이상이면 ODsay로 실제 경로 조회 시도 (지도 선 표시용)
   if (result.totalWalkMin >= DB_WALK_MIN_FOR_BUS_API) {
-    busAvailable = false;
     try {
       const busResult = await fetchBusRouteViaProxy(
         property.lng, property.lat,
         building.lng, building.lat,
       );
       if (busResult) {
-        busMin = busResult.busMin;
+        // ODsay 성공: 경로 + 시간 모두 갱신
+        busMin = busResult.busMin > 0 ? busResult.busMin : busMin;
         busPath = busResult.busPath;
         busAvailable = true;
       }
     } catch {
-      /* 버스 경로 실패 시 무시 */
+      /* ODsay 실패 시 DB 시간 유지, 경로만 없음 */
     }
   }
 

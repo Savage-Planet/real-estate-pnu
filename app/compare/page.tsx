@@ -257,6 +257,14 @@ function MicroCompareView({
     ((activeRoute.side === "a" && slopePolylinesA && slopePolylinesA.length > 0) ||
       (activeRoute.side === "b" && slopePolylinesB && slopePolylinesB.length > 0));
 
+  // 버스 버튼을 눌렀으나 경로 데이터가 없는 경우 (DB 시간은 있지만 ODsay 경로 없음)
+  const busNoPath =
+    activeRoute?.type === "bus" &&
+    (() => {
+      const t = activeRoute.side === "a" ? transitA : transitB;
+      return !t?.busPath || t.busPath.length < 2;
+    })();
+
   const allMarkers: KakaoMapMarker[] = [
     { lat: pA.lat, lng: pA.lng, label: `A: ${pA.monthly_rent}만`, color: "red" },
     { lat: pB.lat, lng: pB.lng, label: `B: ${pB.monthly_rent}만`, color: "blue" },
@@ -325,6 +333,13 @@ function MicroCompareView({
         autoFit
         fitPadding={120}
       />
+
+      {/* 버스 경로 데이터 없음 안내 */}
+      {busNoPath && (
+        <div className="absolute left-1/2 top-[92px] z-10 -translate-x-1/2 rounded-xl bg-white/90 px-3 py-1.5 text-[11px] text-gray-500 shadow backdrop-blur-sm">
+          버스 경로 정보를 불러올 수 없습니다 (시간만 참고)
+        </div>
+      )}
 
       {/* 경사도 범례 (도보 경로 + slope 데이터 있을 때만) */}
       {showSlopeLegend && (
