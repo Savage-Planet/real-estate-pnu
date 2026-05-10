@@ -286,7 +286,7 @@ function SurveyContent() {
         novelty_rating: data.novelty_rating || null,
       };
       const { error: err } = await supabase.from("survey_responses").insert(payload);
-      if (err) throw err;
+      if (err) throw new Error(`DB 오류: ${err.message} (code: ${err.code})`);
       router.push("/survey?done=1");
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장 중 오류가 발생했습니다");
