@@ -24,7 +24,6 @@ import {
 } from "@/lib/amenities";
 import {
   samplePoints,
-  fetchRouteElevations,
   calcSlopePolylines,
   SLOPE_LEVELS,
 } from "@/lib/elevation";
@@ -239,6 +238,7 @@ function MicroCompareView({
    *   { side: 'a'|'b', type: 'walk'|'bus' }
    */
   const [activeRoute, setActiveRoute] = useState<{ side: "a" | "b"; type: "walk" | "bus" } | null>(null);
+  const [amenityMarker, setAmenityMarker] = useState<KakaoMapMarker | null>(null);
 
   const { propertyA: pA, propertyB: pB } = step;
   const {
@@ -267,6 +267,7 @@ function MicroCompareView({
   if (building) {
     allMarkers.push({ lat: building.lat, lng: building.lng, label: building.name, color: "star" });
   }
+  if (amenityMarker) allMarkers.push(amenityMarker);
 
   const routePolylines: KakaoMapPolyline[] = [];
   if (activeRoute) {
@@ -440,15 +441,34 @@ function MicroCompareView({
                   </p>
                 )}
                 {nearestAmenities && nearestAmenities.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {nearestAmenities.slice(0, 2).map((a) => (
-                      <span
-                        key={a.type}
-                        className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600"
-                      >
-                        {a.icon} {Math.round(a.distM)}m
-                      </span>
-                    ))}
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {nearestAmenities.map((a) => {
+                      const isActive = amenityMarker?.label?.startsWith(a.icon);
+                      return (
+                        <button
+                          key={a.type}
+                          onClick={() => {
+                            if (isActive) {
+                              setAmenityMarker(null);
+                            } else {
+                              setAmenityMarker({
+                                lat: a.lat,
+                                lng: a.lng,
+                                label: `${a.icon} ${Math.round(a.distM)}m`,
+                                color: "light",
+                              });
+                            }
+                          }}
+                          className={`rounded-full px-1.5 py-0.5 text-[10px] transition ${
+                            isActive
+                              ? "bg-indigo-500 text-white"
+                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          }`}
+                        >
+                          {a.icon} {Math.round(a.distM)}m
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
                 <Button
@@ -709,19 +729,34 @@ function CompareContent() {
       }
 
       // 경사도 색상 폴리라인 (실패 시 빈 배열)
-      // propertyToGateRoute / gateToBuildingRoute 를 각각 독립 샘플링하여
-      // 두 구간을 합친 뒤 샘플링할 때 정문 꺾임 포인트가 생략되어
-      // 대각선 연결이 생기는 문제를 방지한다.
+      // 두 구간(propertyToGate, gateToBuilding)의 샘플 포인트를 합쳐
+      // 단 한 번의 elevation API 호출로 처리한다.
+      // (API 2회 호출로 인한 rate-limit 오류 방지 + 정문 꺾임 유지)
       let slopePolylinesA: KakaoMapPolyline[] | undefined;
       let slopePolylinesB: KakaoMapPolyline[] | undefined;
       try {
         const buildSlopeForTransit = async (t: TransitResult): Promise<KakaoMapPolyline[] | undefined> => {
+          const seg1 = t.propertyToGateRoute ?? [];
+          const seg2 = t.gateToBuildingRoute ?? [];
+          const sampled1 = seg1.length >= 2 ? samplePoints(seg1, 16) : [];
+          const sampled2 = seg2.length >= 2 ? samplePoints(seg2, 16) : [];
+          const combined = [...sampled1, ...sampled2];
+          if (combined.length < 2) return undefined;
+          // 단일 API 호출
+          const res = await fetch("/api/elevation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ locations: combined }),
+          });
+          if (!res.ok) return undefined;
+          const { elevations } = (await res.json()) as { elevations: number[] };
+          if (!elevations || elevations.length !== combined.length) return undefined;
           const results: KakaoMapPolyline[] = [];
-          for (const seg of [t.propertyToGateRoute, t.gateToBuildingRoute]) {
-            if (!seg || seg.length < 2) continue;
-            const sampled = samplePoints(seg);
-            const elevs = await fetchRouteElevations(sampled);
-            results.push(...calcSlopePolylines(sampled, elevs, 5));
+          if (sampled1.length >= 2) {
+            results.push(...calcSlopePolylines(sampled1, elevations.slice(0, sampled1.length), 5));
+          }
+          if (sampled2.length >= 2) {
+            results.push(...calcSlopePolylines(sampled2, elevations.slice(sampled1.length), 5));
           }
           return results.length > 0 ? results : undefined;
         };
