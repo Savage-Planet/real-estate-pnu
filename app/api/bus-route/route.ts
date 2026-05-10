@@ -24,9 +24,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: "no_odsay_key" });
   }
 
-  // ODsay에 등록된 URI로 Referer 고정 (어느 도메인에서 접속해도 인증 통과)
-  const ODSAY_REFERER = "https://real-estate-pnu-ngyh.vercel.app/compare";
-  const ODSAY_ORIGIN  = "https://real-estate-pnu-ngyh.vercel.app";
+  // ODsay에 등록된 URI로 Referer 고정.
+  // 사용자가 접속하는 실제 운영 도메인을 사용 (real-estate-pnu.vercel.app)
+  const ODSAY_REFERER = "https://real-estate-pnu.vercel.app/compare";
+  const ODSAY_ORIGIN  = "https://real-estate-pnu.vercel.app";
 
   const odsayPath =
     `/v1/api/searchPubTransPathT?SX=${sx}&SY=${sy}&EX=${ex}&EY=${ey}&apiKey=${encodeURIComponent(key)}`;
@@ -61,8 +62,8 @@ export async function GET(request: Request) {
 
     if (json.error) {
       const errMsg = `odsay_error:${JSON.stringify(json.error)}`;
-      console.error("[bus-route proxy]", errMsg);
-      return NextResponse.json({ ok: false, reason: errMsg, v: 5 });
+      console.error("[bus-route proxy]", errMsg, "ref:", ODSAY_REFERER);
+      return NextResponse.json({ ok: false, reason: errMsg, ref: ODSAY_REFERER, v: 6 });
     }
 
     const paths = (json as any)?.result?.path;
