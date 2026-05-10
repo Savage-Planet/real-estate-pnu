@@ -349,6 +349,18 @@ function MicroCompareView({
       />
 
 
+      {/* 버스 활성인데 ODsay 경로 데이터 없음 안내 */}
+      {activeRoute?.type === "bus" && (() => {
+        const t = activeRoute.side === "a" ? transitA : transitB;
+        const noPath = !t?.busPath || t.busPath.length < 2;
+        if (!noPath) return null;
+        return (
+          <div className="absolute left-1/2 top-[110px] z-20 -translate-x-1/2 rounded-xl bg-amber-50/95 px-3 py-1.5 text-center text-[11px] text-amber-700 shadow backdrop-blur-sm">
+            ODsay 버스 경로를 불러올 수 없습니다 (시간만 표시: {t?.busMin ?? 0}분)
+          </div>
+        );
+      })()}
+
       {/* 경사도 범례 (도보 경로 + slope 데이터 있을 때만) */}
       {showSlopeLegend && (
         <div className="absolute left-3 top-[92px] z-10 rounded-xl bg-white/90 px-2.5 py-2 text-[10px] shadow backdrop-blur-sm">
@@ -418,8 +430,12 @@ function MicroCompareView({
         </div>
 
         {/* 편의시설 버튼 행 — 카드 위에 A/B 각각 배치 */}
-        {(nearestAmenitiesA && nearestAmenitiesA.length > 0) ||
-         (nearestAmenitiesB && nearestAmenitiesB.length > 0) ? (
+        {!amenityTypes ? (
+          <div className="mb-1.5 rounded-xl bg-amber-50/95 px-3 py-1.5 text-center text-[11px] text-amber-700 backdrop-blur-sm">
+            편의시설을 선택하지 않았습니다. 필터 페이지에서 선택 후 다시 시도하세요.
+          </div>
+        ) : (nearestAmenitiesA && nearestAmenitiesA.length > 0) ||
+           (nearestAmenitiesB && nearestAmenitiesB.length > 0) ? (
           <div className="mb-1.5 flex gap-2">
             {(["a", "b"] as const).map((side) => {
               const list = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
@@ -458,7 +474,11 @@ function MicroCompareView({
               );
             })}
           </div>
-        ) : null}
+        ) : (
+          <div className="mb-1.5 rounded-xl bg-gray-50/95 px-3 py-1.5 text-center text-[11px] text-gray-500 backdrop-blur-sm">
+            편의시설 정보 로딩 중… 또는 데이터 없음 ({amenityTypes})
+          </div>
+        )}
 
         {/* A / B 카드 */}
         <div className="flex gap-2">
