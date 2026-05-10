@@ -60,8 +60,9 @@ export async function GET(request: Request) {
 
     if (json.error) {
       const errMsg = `odsay_error:${JSON.stringify(json.error)}`;
-      console.error("[bus-route proxy]", errMsg);
-      return NextResponse.json({ ok: false, reason: errMsg });
+      console.error("[bus-route proxy]", errMsg, "referer_used:", incomingReferer);
+      // referer_used 필드를 포함해 디버깅 가능하게 반환
+      return NextResponse.json({ ok: false, reason: errMsg, referer_used: incomingReferer, v: 3 });
     }
 
     const paths = (json as any)?.result?.path;
