@@ -80,7 +80,7 @@ export async function calcTransitForDisplay(
   let busPath: LatLngPoint[] = [];
   let busAvailable: boolean | null = busMin > 0 ? false : null;
 
-  // 도보 임계 이상이면 ODsay로 실제 경로 조회 시도 (지도 선 표시용)
+  // ODsay로 실제 경로 조회 시도 (지도 선 표시용)
   if (result.totalWalkMin >= DB_WALK_MIN_FOR_BUS_API) {
     try {
       const busResult = await fetchBusRouteViaProxy(
@@ -94,8 +94,22 @@ export async function calcTransitForDisplay(
         busAvailable = true;
       }
     } catch {
-      /* ODsay 실패 시 DB 시간 유지, 경로만 없음 */
+      /* ODsay 실패 시 DB 시간 유지 */
     }
+  }
+
+  // ODsay 경로 조회 실패 또는 생략 시, DB 버스 시간이 있으면 직선 경로를 fallback으로 사용
+  // (Vercel 서버 IP가 ODsay 화이트리스트에 없을 경우를 대비)
+  if (busPath.length < 2 && busMin > 0) {
+    // 매물 → 정문 근처 중간점 → 건물 의 간단한 3점 경로
+    const midLat = (property.lat + building.lat) / 2;
+    const midLng = (property.lng + building.lng) / 2;
+    busPath = [
+      { lat: property.lat, lng: property.lng },
+      { lat: midLat, lng: midLng },
+      { lat: building.lat, lng: building.lng },
+    ];
+    busAvailable = true;
   }
 
   return {
