@@ -57,8 +57,8 @@ async function callGeminiWithRetry(
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1024,
+          temperature: 0.4,
+          maxOutputTokens: 2048,
           responseMimeType: "application/json",
         },
       }),

@@ -688,28 +688,25 @@ function CompareContent() {
       }
 
       // 경사도 색상 폴리라인 (실패 시 빈 배열)
+      // propertyToGateRoute / gateToBuildingRoute 를 각각 독립 샘플링하여
+      // 두 구간을 합친 뒤 샘플링할 때 정문 꺾임 포인트가 생략되어
+      // 대각선 연결이 생기는 문제를 방지한다.
       let slopePolylinesA: KakaoMapPolyline[] | undefined;
       let slopePolylinesB: KakaoMapPolyline[] | undefined;
       try {
-        const buildFullRoute = (t: TransitResult) => [
-          ...t.propertyToGateRoute,
-          ...t.gateToBuildingRoute,
-        ];
+        const buildSlopeForTransit = async (t: TransitResult): Promise<KakaoMapPolyline[] | undefined> => {
+          const results: KakaoMapPolyline[] = [];
+          for (const seg of [t.propertyToGateRoute, t.gateToBuildingRoute]) {
+            if (!seg || seg.length < 2) continue;
+            const sampled = samplePoints(seg);
+            const elevs = await fetchRouteElevations(sampled);
+            results.push(...calcSlopePolylines(sampled, elevs, 5));
+          }
+          return results.length > 0 ? results : undefined;
+        };
         const [slA, slB] = await Promise.all([
-          transitA ? (async () => {
-            const route = buildFullRoute(transitA);
-            if (route.length < 2) return undefined;
-            const sampled = samplePoints(route);
-            const elevs = await fetchRouteElevations(sampled);
-            return calcSlopePolylines(sampled, elevs, 5);
-          })() : Promise.resolve(undefined),
-          transitB ? (async () => {
-            const route = buildFullRoute(transitB);
-            if (route.length < 2) return undefined;
-            const sampled = samplePoints(route);
-            const elevs = await fetchRouteElevations(sampled);
-            return calcSlopePolylines(sampled, elevs, 5);
-          })() : Promise.resolve(undefined),
+          transitA ? buildSlopeForTransit(transitA) : Promise.resolve(undefined),
+          transitB ? buildSlopeForTransit(transitB) : Promise.resolve(undefined),
         ]);
         slopePolylinesA = slA ?? undefined;
         slopePolylinesB = slB ?? undefined;

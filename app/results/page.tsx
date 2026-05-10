@@ -209,7 +209,8 @@ function ResultsContent() {
           .map((id, rank) => {
             const p = propMap.get(id);
             if (!p) return null;
-            return { property: p, score: 1 - rank / topIds.length };
+            // 지수 감쇠: 1위=1.0, 2위≈0.85, 3위≈0.72, 4위≈0.61…
+            return { property: p, score: Math.pow(0.85, rank) };
           })
           .filter((x): x is ScoredProperty => x !== null);
         const rest: ScoredProperty[] = typed
