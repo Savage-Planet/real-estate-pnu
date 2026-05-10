@@ -6,21 +6,25 @@ import type { Property, Building } from "@/types";
 async function fetchBusRouteViaProxy(
   startLng: number, startLat: number,
   endLng: number, endLat: number,
-): Promise<{ busMin: number; busPath: LatLngPoint[] } | null> {
+): Promise<{ busMin: number; busPath: LatLngPoint[]; reason?: string }> {
   try {
     const url = `/api/bus-route?sx=${startLng}&sy=${startLat}&ex=${endLng}&ey=${endLat}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return { busMin: 0, busPath: [], reason: `proxy_http_${res.status}` };
+    }
     const data = await res.json() as { ok: boolean; reason?: string; busMin?: number; path?: LatLngPoint[] };
     if (!data.ok) {
       console.warn("[bus-route] proxy returned error:", data.reason);
-      return null;
+      return { busMin: 0, busPath: [], reason: data.reason ?? "unknown" };
     }
-    if (!data.path || data.path.length < 2) return null;
+    if (!data.path || data.path.length < 2) {
+      return { busMin: 0, busPath: [], reason: "no_path" };
+    }
     return { busMin: data.busMin ?? 0, busPath: data.path };
   } catch (e) {
     console.warn("[bus-route] proxy fetch failed:", e);
-    return null;
+    return { busMin: 0, busPath: [], reason: `fetch_err:${String(e).slice(0, 60)}` };
   }
 }
 
@@ -39,6 +43,8 @@ export interface TransitResult {
   busPath: LatLngPoint[];
   /** DB 도보가 임계 이상일 때만 ODsay 조회. null = 조회 안 함(도보 짧음), true/false = 경로 유무 */
   busAvailable: boolean | null;
+  /** 디버깅용: ODsay 호출 실패 이유 (성공 시 undefined) */
+  busReason?: string;
 }
 
 /**
@@ -84,23 +90,23 @@ export async function calcTransitForDisplay(
   let busMin = dbBusMin ?? 0;
   let busPath: LatLngPoint[] = [];
   let busAvailable: boolean | null = busMin > 0 ? false : null;
+  let busReason: string | undefined;
 
   // ODsay로 실제 경로 조회 시도 (지도 선 표시용)
   if (result.totalWalkMin >= DB_WALK_MIN_FOR_BUS_API) {
-    try {
-      const busResult = await fetchBusRouteViaProxy(
-        property.lng, property.lat,
-        building.lng, building.lat,
-      );
-      if (busResult) {
-        // ODsay 성공: 경로 + 시간 모두 갱신
-        busMin = busResult.busMin > 0 ? busResult.busMin : busMin;
-        busPath = busResult.busPath;
-        busAvailable = true;
-      }
-    } catch {
-      /* ODsay 실패 시 DB 시간 유지 */
+    const busResult = await fetchBusRouteViaProxy(
+      property.lng, property.lat,
+      building.lng, building.lat,
+    );
+    if (busResult.busPath.length >= 2) {
+      busMin = busResult.busMin > 0 ? busResult.busMin : busMin;
+      busPath = busResult.busPath;
+      busAvailable = true;
+    } else {
+      busReason = busResult.reason;
     }
+  } else {
+    busReason = `walk_too_short(${result.totalWalkMin}min)`;
   }
 
   // 서버 프록시가 실패한 경우 → 브라우저에서 ODsay 직접 호출 시도
@@ -113,12 +119,14 @@ export async function calcTransitForDisplay(
         busMin = direct.busTime > 0 ? direct.busTime : busMin;
         busPath = direct.path;
         busAvailable = true;
+        busReason = undefined;
+      } else {
+        busReason = (busReason ?? "") + "+direct_null";
       }
-    } catch { /* 직접 호출 실패 시 직선 fallback으로 넘어감 */ }
+    } catch (e) {
+      busReason = (busReason ?? "") + `+direct_err:${String(e).slice(0, 30)}`;
+    }
   }
-
-  // 직선 fallback은 사용하지 않음 — 진짜 ODsay 경로가 없으면 경로 비표시
-  // (사용자에게 가짜 직선 경로가 진짜인 것처럼 보이는 혼란 방지)
 
   return {
     walkMin: result.totalWalkMin,
@@ -129,5 +137,6 @@ export async function calcTransitForDisplay(
     busMin,
     busPath,
     busAvailable,
+    busReason,
   };
 }

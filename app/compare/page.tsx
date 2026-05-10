@@ -349,14 +349,14 @@ function MicroCompareView({
       />
 
 
-      {/* 버스 활성인데 ODsay 경로 데이터 없음 안내 */}
+      {/* 버스 활성인데 ODsay 경로 데이터 없음 안내 — reason 표시 */}
       {activeRoute?.type === "bus" && (() => {
         const t = activeRoute.side === "a" ? transitA : transitB;
         const noPath = !t?.busPath || t.busPath.length < 2;
         if (!noPath) return null;
         return (
           <div className="absolute left-1/2 top-[110px] z-20 -translate-x-1/2 rounded-xl bg-amber-50/95 px-3 py-1.5 text-center text-[11px] text-amber-700 shadow backdrop-blur-sm">
-            ODsay 버스 경로를 불러올 수 없습니다 (시간만 표시: {t?.busMin ?? 0}분)
+            ODsay 경로 미수신 (시간 {t?.busMin ?? 0}분) · 사유: <code className="font-mono">{t?.busReason ?? "?"}</code>
           </div>
         );
       })()}
