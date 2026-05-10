@@ -10,6 +10,15 @@ import { NextResponse } from "next/server";
  *       | { ok: false, reason }
  */
 export async function GET(request: Request) {
+  // 인입 요청의 origin을 ODsay에 Referer로 전달 (도메인 화이트리스트 우회)
+  const incomingOrigin =
+    request.headers.get("origin") ??
+    (() => {
+      const ref = request.headers.get("referer");
+      if (!ref) return "";
+      try { return new URL(ref).origin; } catch { return ""; }
+    })();
+  const siteOrigin = incomingOrigin || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   const { searchParams } = new URL(request.url);
   const sx = searchParams.get("sx");
   const sy = searchParams.get("sy");
@@ -35,6 +44,10 @@ export async function GET(request: Request) {
   try {
     const res = await fetch(url.toString(), {
       signal: AbortSignal.timeout(12_000),
+      headers: {
+        "Referer": siteOrigin,
+        "Origin": siteOrigin,
+      },
     });
     if (!res.ok) {
       return NextResponse.json({ ok: false, reason: `odsay_http_${res.status}` });

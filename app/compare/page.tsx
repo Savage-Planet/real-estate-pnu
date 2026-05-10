@@ -19,6 +19,7 @@ import { formatCompareError, logCompare, logCompareError, withTimeout } from "@/
 import {
   loadAmenitiesByTypes,
   calcNearestAmenities,
+  AMENITY_TYPES,
   type NearestAmenity,
 } from "@/lib/amenities";
 import {
@@ -223,11 +224,13 @@ function MicroCompareView({
   enrichState,
   building,
   onAnswer,
+  amenityTypes = "",
 }: {
   step: MicroStep;
   enrichState: PairEnrichState;
   building: Building | null;
   onAnswer: (w: "a" | "b") => void;
+  amenityTypes?: string;
 }) {
   const [showModal, setShowModal] = useState(false);
   /**
@@ -313,6 +316,24 @@ function MicroCompareView({
         <div className="mt-1.5 rounded-lg bg-white/80 px-3 py-1 text-center text-[11px] font-medium text-gray-600 backdrop-blur-sm">
           {diffLine}
         </div>
+        {/* 선택한 편의시설 칩 */}
+        {amenityTypes && (() => {
+          const selected = amenityTypes.split(",").filter(Boolean);
+          const chips = AMENITY_TYPES.filter((a) => selected.includes(a.type));
+          if (chips.length === 0) return null;
+          return (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {chips.map((a) => (
+                <span
+                  key={a.type}
+                  className="rounded-full bg-white/85 px-2 py-0.5 text-[10px] font-medium text-gray-600 shadow-sm backdrop-blur-sm"
+                >
+                  {a.icon} {a.label}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* 지도 */}
@@ -818,6 +839,7 @@ function CompareContent() {
             enrichState={enrichState}
             building={building}
             onAnswer={handleAnswer}
+            amenityTypes={amenityTypesParam}
           />
         </motion.div>
       </AnimatePresence>
