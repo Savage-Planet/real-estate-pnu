@@ -11,10 +11,15 @@ async function fetchBusRouteViaProxy(
     const url = `/api/bus-route?sx=${startLng}&sy=${startLat}&ex=${endLng}&ey=${endLat}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
-    const data = await res.json() as { ok: boolean; busMin?: number; path?: LatLngPoint[] };
-    if (!data.ok || !data.path || data.path.length < 2) return null;
+    const data = await res.json() as { ok: boolean; reason?: string; busMin?: number; path?: LatLngPoint[] };
+    if (!data.ok) {
+      console.warn("[bus-route] proxy returned error:", data.reason);
+      return null;
+    }
+    if (!data.path || data.path.length < 2) return null;
     return { busMin: data.busMin ?? 0, busPath: data.path };
-  } catch {
+  } catch (e) {
+    console.warn("[bus-route] proxy fetch failed:", e);
     return null;
   }
 }

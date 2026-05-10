@@ -38,13 +38,17 @@ export async function GET(request: Request) {
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("[bus-route proxy] ODsay HTTP error", res.status, body.slice(0, 200));
       return NextResponse.json({ ok: false, reason: `odsay_http_${res.status}` });
     }
 
     const json = await res.json() as Record<string, unknown>;
 
     if (json.error) {
-      return NextResponse.json({ ok: false, reason: `odsay_error:${JSON.stringify(json.error)}` });
+      const errMsg = `odsay_error:${JSON.stringify(json.error)}`;
+      console.error("[bus-route proxy]", errMsg);
+      return NextResponse.json({ ok: false, reason: errMsg });
     }
 
     const paths = (json as any)?.result?.path;
