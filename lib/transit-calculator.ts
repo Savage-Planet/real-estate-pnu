@@ -13,10 +13,11 @@ async function fetchBusRouteViaProxy(
     if (!res.ok) {
       return { busMin: 0, busPath: [], reason: `proxy_http_${res.status}` };
     }
-    const data = await res.json() as { ok: boolean; reason?: string; busMin?: number; path?: LatLngPoint[] };
+    const data = await res.json() as { ok: boolean; reason?: string; busMin?: number; path?: LatLngPoint[]; referer_used?: string; v?: number };
     if (!data.ok) {
-      console.warn("[bus-route] proxy returned error:", data.reason);
-      return { busMin: 0, busPath: [], reason: data.reason ?? "unknown" };
+      const reason = `${data.reason ?? "unknown"}|ref:${data.referer_used ?? "?"}|v:${data.v ?? 0}`;
+      console.warn("[bus-route] proxy returned error:", reason);
+      return { busMin: 0, busPath: [], reason };
     }
     if (!data.path || data.path.length < 2) {
       return { busMin: 0, busPath: [], reason: "no_path" };
