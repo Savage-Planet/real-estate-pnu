@@ -417,13 +417,55 @@ function MicroCompareView({
           })}
         </div>
 
+        {/* 편의시설 버튼 행 — 카드 위에 A/B 각각 배치 */}
+        {(nearestAmenitiesA && nearestAmenitiesA.length > 0) ||
+         (nearestAmenitiesB && nearestAmenitiesB.length > 0) ? (
+          <div className="mb-1.5 flex gap-2">
+            {(["a", "b"] as const).map((side) => {
+              const list = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
+              const themeBg = side === "a" ? "bg-red-500" : "bg-blue-500";
+              return (
+                <div key={side} className="flex flex-1 flex-wrap items-center justify-center gap-1">
+                  {(list ?? []).map((a) => {
+                    const markerLabel = `${a.icon} ${a.label} ${Math.round(a.distM)}m`;
+                    const isActive = amenityMarker?.label === markerLabel;
+                    return (
+                      <button
+                        key={`${side}-${a.type}`}
+                        onClick={() => {
+                          if (isActive) {
+                            setAmenityMarker(null);
+                          } else {
+                            setAmenityMarker({
+                              lat: a.lat,
+                              lng: a.lng,
+                              label: markerLabel,
+                              color: "light",
+                            });
+                          }
+                        }}
+                        className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-semibold backdrop-blur-sm transition active:scale-[0.97] ${
+                          isActive ? `${themeBg} text-white shadow` : "bg-white/90 text-gray-600 shadow"
+                        }`}
+                      >
+                        <span>{a.icon}</span>
+                        <span>{a.label}</span>
+                        <span className="text-[10px] opacity-80">{Math.round(a.distM)}m</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         {/* A / B 카드 */}
         <div className="flex gap-2">
           {(["a", "b"] as const).map((side) => {
             const p = side === "a" ? pA : pB;
             const transit = side === "a" ? transitA : transitB;
             const themeColor = side === "a" ? "red" : "blue";
-            const nearestAmenities = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
             return (
               <div key={side} className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
                 <span className={`mb-1 text-xs font-bold text-${themeColor}-500`}>{side.toUpperCase()}</span>
@@ -439,37 +481,6 @@ function MicroCompareView({
                     🚶 {transit.walkMin}분
                     {transit.busMin > 0 && `  🚌 ${transit.busMin}분`}
                   </p>
-                )}
-                {nearestAmenities && nearestAmenities.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {nearestAmenities.map((a) => {
-                      const isActive = amenityMarker?.label?.startsWith(a.icon);
-                      return (
-                        <button
-                          key={a.type}
-                          onClick={() => {
-                            if (isActive) {
-                              setAmenityMarker(null);
-                            } else {
-                              setAmenityMarker({
-                                lat: a.lat,
-                                lng: a.lng,
-                                label: `${a.icon} ${Math.round(a.distM)}m`,
-                                color: "light",
-                              });
-                            }
-                          }}
-                          className={`rounded-full px-1.5 py-0.5 text-[10px] transition ${
-                            isActive
-                              ? "bg-indigo-500 text-white"
-                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          }`}
-                        >
-                          {a.icon} {Math.round(a.distM)}m
-                        </button>
-                      );
-                    })}
-                  </div>
                 )}
                 <Button
                   size="sm"

@@ -117,17 +117,8 @@ export async function calcTransitForDisplay(
     } catch { /* 직접 호출 실패 시 직선 fallback으로 넘어감 */ }
   }
 
-  // 모든 시도 실패 시 DB 버스 시간이 있으면 직선 경로를 최후 fallback으로 사용
-  if (busPath.length < 2 && busMin > 0) {
-    const midLat = (property.lat + building.lat) / 2;
-    const midLng = (property.lng + building.lng) / 2;
-    busPath = [
-      { lat: property.lat, lng: property.lng },
-      { lat: midLat, lng: midLng },
-      { lat: building.lat, lng: building.lng },
-    ];
-    busAvailable = true;
-  }
+  // 직선 fallback은 사용하지 않음 — 진짜 ODsay 경로가 없으면 경로 비표시
+  // (사용자에게 가짜 직선 경로가 진짜인 것처럼 보이는 혼란 방지)
 
   return {
     walkMin: result.totalWalkMin,
