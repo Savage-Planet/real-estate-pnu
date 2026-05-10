@@ -25,9 +25,9 @@ export async function GET(request: Request) {
   }
 
   // ODsay에 등록된 URI로 Referer 고정.
-  // 사용자가 접속하는 실제 운영 도메인을 사용 (real-estate-pnu.vercel.app)
-  const ODSAY_REFERER = "https://real-estate-pnu.vercel.app/compare";
-  const ODSAY_ORIGIN  = "https://real-estate-pnu.vercel.app";
+  // 등록된 슬롯: real-estate-pnu-ngyh.vercel.app
+  const ODSAY_REFERER = "https://real-estate-pnu-ngyh.vercel.app/compare";
+  const ODSAY_ORIGIN  = "https://real-estate-pnu-ngyh.vercel.app";
 
   const odsayPath =
     `/v1/api/searchPubTransPathT?SX=${sx}&SY=${sy}&EX=${ex}&EY=${ey}&apiKey=${encodeURIComponent(key)}`;
