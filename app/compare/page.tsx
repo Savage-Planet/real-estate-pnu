@@ -352,6 +352,48 @@ function MicroCompareView({
           </button>
         </div>
 
+        {/* 경로 버튼 행 — 카드 위에 A/B 각각 배치 */}
+        <div className="mb-1.5 flex gap-2">
+          {(["a", "b"] as const).map((side) => {
+            const transit = side === "a" ? transitA : transitB;
+            const themeColor = side === "a" ? "red" : "blue";
+            const isWalkActive = activeRoute?.side === side && activeRoute.type === "walk";
+            const isBusActive  = activeRoute?.side === side && activeRoute.type === "bus";
+            const hasBus = transit?.busMin != null && transit.busMin > 0;
+            const activeBase = themeColor === "red"
+              ? "bg-red-500 text-white shadow"
+              : "bg-blue-500 text-white shadow";
+            return (
+              <div key={side} className="flex flex-1 items-center justify-center gap-1.5">
+                <button
+                  onClick={() => toggleRoute(side, "walk")}
+                  className={`flex flex-1 items-center justify-center gap-1 rounded-xl py-2 text-xs font-semibold backdrop-blur-sm transition active:scale-[0.97] ${
+                    isWalkActive ? activeBase : "bg-white/90 text-gray-600 shadow"
+                  }`}
+                >
+                  <Footprints className="size-3.5" />
+                  {side.toUpperCase()} 도보
+                </button>
+                {hasBus ? (
+                  <button
+                    onClick={() => toggleRoute(side, "bus")}
+                    className={`flex flex-1 items-center justify-center gap-1 rounded-xl py-2 text-xs font-semibold backdrop-blur-sm transition active:scale-[0.97] ${
+                      isBusActive ? activeBase : "bg-white/90 text-gray-600 shadow"
+                    }`}
+                  >
+                    <BusFront className="size-3.5" />
+                    {side.toUpperCase()} 버스
+                  </button>
+                ) : (
+                  <div className="flex-1 rounded-xl bg-white/50 py-2 text-center text-xs text-gray-300">
+                    버스 없음
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         {/* A / B 카드 */}
         <div className="flex gap-2">
           {(["a", "b"] as const).map((side) => {
@@ -359,45 +401,9 @@ function MicroCompareView({
             const transit = side === "a" ? transitA : transitB;
             const themeColor = side === "a" ? "red" : "blue";
             const nearestAmenities = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
-            const isWalkActive = activeRoute?.side === side && activeRoute.type === "walk";
-            const isBusActive  = activeRoute?.side === side && activeRoute.type === "bus";
-            const hasBus = transit?.busMin != null && transit.busMin > 0;
             return (
               <div key={side} className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
-                {/* 헤더 */}
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className={`text-xs font-bold text-${themeColor}-500`}>{side.toUpperCase()}</span>
-                  {/* 경로 토글 버튼 */}
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => toggleRoute(side, "walk")}
-                      title="도보 경로"
-                      className={`flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] font-semibold transition ${
-                        isWalkActive
-                          ? themeColor === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                          : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                      }`}
-                    >
-                      <Footprints className="size-3" />
-                      도보
-                    </button>
-                    {hasBus && (
-                      <button
-                        onClick={() => toggleRoute(side, "bus")}
-                        title="버스 경로"
-                        className={`flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] font-semibold transition ${
-                          isBusActive
-                            ? themeColor === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                            : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                        }`}
-                      >
-                        <BusFront className="size-3" />
-                        버스
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {/* 매물 정보 */}
+                <span className={`mb-1 text-xs font-bold text-${themeColor}-500`}>{side.toUpperCase()}</span>
                 <p className="text-sm font-semibold">{priceLabel(p)}</p>
                 {p.trade_type !== "전세" && (
                   <p className="text-xs text-gray-400">보증금 {p.deposit.toLocaleString()}만</p>

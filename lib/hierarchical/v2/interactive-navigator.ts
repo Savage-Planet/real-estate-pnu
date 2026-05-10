@@ -490,13 +490,18 @@ export class InteractiveNavigator {
         const delta = sA.map((v, k) => v - sB[k]);
         const logit = 2.5 * dot(mean, delta);
         const pAB = sigmoid(logit);
-        // 불확실도가 높을수록(0.5에 가까울수록) 좋음, 자주 등장한 매물 페널티
+        // 불확실도가 높을수록(0.5에 가까울수록) 좋음
         const ambiguity = 0.5 - Math.abs(pAB - 0.5);
+        // 자주 등장한 매물 페널티
         const countPenalty =
           ((this.propertyAppearCount.get(pool[i].id) ?? 0) +
             (this.propertyAppearCount.get(pool[j].id) ?? 0)) *
           0.05;
-        const score = ambiguity - countPenalty;
+        // 지리적 거리 보너스: 두 매물이 멀수록 비교 가치가 높음
+        // 최대 500m 거리를 기준으로 0~0.20 보너스 (4회 count penalty 상당)
+        const distM = haversine(pool[i].lat, pool[i].lng, pool[j].lat, pool[j].lng);
+        const geoBonus = Math.min(distM, 500) / 500 * 0.20;
+        const score = ambiguity + geoBonus - countPenalty;
 
         if (score > bestScore) {
           bestScore = score;
