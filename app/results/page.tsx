@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, RefreshCw, ClipboardList } from "lucide-react";
+import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, Sparkles, Loader2, RefreshCw, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
@@ -113,10 +113,11 @@ function ResultsContent() {
 
   interface Explanation {
     summary?: string;
+    personalityProfile?: string[];
+    hiddenPreference?: string | null;
     whyTop1?: string[];
     top1VsTop2?: string[];
-    weightShift?: string[];
-    caveat?: string;
+    caveat?: string | null;
   }
 
   const [explanation, setExplanation] = useState<Explanation | null>(null);
@@ -463,53 +464,6 @@ function ResultsContent() {
           </p>
         </motion.div>
 
-        {/* Weight comparison: Initial vs Learned */}
-        {weightComparison.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="mb-5 rounded-2xl border bg-gray-50 p-4"
-          >
-            <p className="mb-3 text-xs font-semibold text-gray-500">선호도 변화 (초기 → 학습)</p>
-            <div className="space-y-2">
-              {weightComparison.slice(0, 10).map(({ name, initial, final: fin, delta }) => (
-                <div key={name} className="flex items-center gap-2">
-                  <span className="w-20 shrink-0 text-xs text-gray-500">{name}</span>
-                  <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-200">
-                    <div
-                      className={`absolute inset-y-0 rounded-full ${fin >= 0 ? "left-1/2 bg-blue-500" : "right-1/2 bg-red-400"}`}
-                      style={{ width: `${Math.min(Math.abs(fin) * 50, 50)}%` }}
-                    />
-                    <div
-                      className={`absolute inset-y-0 rounded-full border-2 ${initial >= 0 ? "left-1/2 border-blue-300" : "right-1/2 border-red-300"}`}
-                      style={{ width: `${Math.min(Math.abs(initial) * 50, 50)}%`, background: "transparent" }}
-                    />
-                  </div>
-                  <span className="flex w-14 shrink-0 items-center justify-end gap-0.5 text-right text-xs tabular-nums">
-                    {Math.abs(delta) > 0.01 ? (
-                      <>
-                        {delta > 0 ? (
-                          <ArrowUpRight className="size-3 text-green-500" />
-                        ) : (
-                          <ArrowDownRight className="size-3 text-red-400" />
-                        )}
-                        <span className={delta > 0 ? "text-green-600" : "text-red-500"}>
-                          {delta > 0 ? "+" : ""}{delta.toFixed(2)}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-gray-400">{fin.toFixed(2)}</span>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <p className="mt-2 text-[10px] text-gray-400">
-              테두리: 초기 가중치 · 채움: 학습 후 가중치
-            </p>
-          </motion.div>
-        )}
 
         {/* Convergence metrics chart */}
         {roundMetrics.length >= 2 && (
@@ -569,10 +523,11 @@ function ResultsContent() {
             {/* 결과 */}
             {explanation && !explainLoading && (() => {
               const hasSummary    = typeof explanation.summary === "string" && explanation.summary.length > 0;
+              const hasProfile    = Array.isArray(explanation.personalityProfile) && explanation.personalityProfile.length > 0;
+              const hasHidden     = typeof explanation.hiddenPreference === "string" && explanation.hiddenPreference.length > 0;
               const hasWhyTop1    = Array.isArray(explanation.whyTop1)    && explanation.whyTop1.length > 0;
               const hasTop1Vs2    = Array.isArray(explanation.top1VsTop2) && explanation.top1VsTop2.length > 0;
-              const hasWeightShift = Array.isArray(explanation.weightShift) && explanation.weightShift.length > 0;
-              const hasContent = hasSummary || hasWhyTop1 || hasTop1Vs2 || hasWeightShift;
+              const hasContent    = hasSummary || hasProfile || hasWhyTop1 || hasTop1Vs2;
 
               if (!hasContent) return (
                 <p className="py-4 text-center text-xs text-gray-400">분석 결과를 불러오지 못했습니다.</p>
@@ -580,12 +535,38 @@ function ResultsContent() {
 
               return (
                 <div className="space-y-3">
-                  {/* 요약 */}
+                  {/* 한줄 성향 요약 */}
                   {hasSummary && (
                     <div className="rounded-xl bg-indigo-50 px-4 py-3">
                       <p className="text-sm font-semibold leading-snug text-indigo-900">
                         {explanation.summary}
                       </p>
+                    </div>
+                  )}
+
+                  {/* 성향 프로파일 */}
+                  {hasProfile && (
+                    <div>
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold text-gray-500">
+                        <span className="text-base">🧠</span>
+                        당신의 선호 성향
+                      </p>
+                      <ul className="space-y-2">
+                        {explanation.personalityProfile!.map((line, i) => (
+                          <li key={i} className="flex gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-700">
+                            <span className="mt-0.5 shrink-0 text-indigo-400">•</span>
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* 숨겨진 선호 */}
+                  {hasHidden && (
+                    <div className="flex gap-2 rounded-xl bg-violet-50 px-3 py-2.5">
+                      <span className="shrink-0 text-violet-500">💡</span>
+                      <p className="text-[11px] leading-relaxed text-violet-800">{explanation.hiddenPreference}</p>
                     </div>
                   )}
 
@@ -616,21 +597,6 @@ function ResultsContent() {
                           <li key={i} className="flex gap-2 text-xs text-gray-700">
                             <span className="mt-0.5 shrink-0 text-violet-400">→</span>
                             {d}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* 가중치 변화 */}
-                  {hasWeightShift && (
-                    <div>
-                      <p className="mb-2 text-xs font-bold text-gray-500">선호도 변화 해석</p>
-                      <ul className="space-y-1.5">
-                        {explanation.weightShift!.map((w, i) => (
-                          <li key={i} className="flex gap-2 text-xs text-gray-700">
-                            <span className="mt-0.5 shrink-0 text-blue-400">↑</span>
-                            {w}
                           </li>
                         ))}
                       </ul>

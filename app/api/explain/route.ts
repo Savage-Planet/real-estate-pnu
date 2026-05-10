@@ -23,10 +23,17 @@ interface PropertySummary {
   score: number;
 }
 
+interface WeightChange {
+  name: string;
+  initial: number;
+  final: number;
+  delta: number;
+}
+
 interface ExplainRequest {
   buildingName: string;
   topProperties: PropertySummary[];
-  weightChanges: Array<{ name: string; initial: number; final: number; delta: number }>;
+  weightChanges: WeightChange[];
   totalComparisons: number;
 }
 
@@ -70,20 +77,32 @@ async function callGeminiWithRetry(
   return { res, errText };
 }
 
-const SYSTEM_PROMPT = `당신은 부산대 학생을 위한 부동산 추천 분석가입니다.
+const SYSTEM_PROMPT = `당신은 부산대 학생을 위한 부동산 추천 AI 분석가입니다.
 
 역할:
-- 학습된 선호도 가중치와 상위 매물 데이터를 기반으로, 왜 이 매물이 높은 순위인지 설명합니다.
+- 비교 선택 과정에서 학습된 선호도 가중치(final 값)를 분석해 이 사용자가 어떤 성향의 사람인지 구체적으로 설명합니다.
+- 상위 매물 데이터를 근거로, 왜 1위 매물이 선택되었는지 설명합니다.
 - 반드시 제공된 숫자 데이터만 근거로 사용하세요. 추측하지 마세요.
-- 한국어로 답변하세요.
+- 한국어로, 친근하고 구체적인 문장으로 작성하세요.
+
+가중치 해석 기준:
+- final 값이 양수(+)이고 클수록 → 해당 항목을 '선호'
+- final 값이 음수(-)이거나 작을수록 → 해당 항목을 '기피'
+- |delta|가 클수록 → 초기 생각과 달리 실제 선택에서 드러난 숨겨진 선호
+- 가중치 이름 예시: 월세, 보증금, 관리비, 도보시간, 방 개수, 년식, 남향, 경비원, 소음, 경사도 등
 
 출력 형식 (반드시 이 JSON 형태로만 응답):
 {
-  "summary": "전체 추천 결과 한줄 요약 (30자 이내)",
-  "whyTop1": ["1위 선택 이유 1", "1위 선택 이유 2", "1위 선택 이유 3"],
-  "weightShift": ["가중치 변화 해석 1", "가중치 변화 해석 2"],
+  "summary": "이 사용자를 한 문장으로 표현 (예: '가격보다 안전을 중시하는 야행성 학생') — 30자 이내",
+  "personalityProfile": [
+    "가중치 기반 성향 설명 1 (예: '월세 부담을 가장 중요하게 여기며, 월 30만원 이하 매물을 강하게 선호합니다')",
+    "가중치 기반 성향 설명 2 (예: '경비원·CCTV 등 보안 시설에 높은 가중치를 부여했습니다')",
+    "가중치 기반 성향 설명 3 (예: '통학 도보 시간보다 가격을 우선시하는 경향이 있습니다')"
+  ],
+  "hiddenPreference": "초기 설정과 달리 실제 선택에서 드러난 숨겨진 선호 1~2문장 (delta가 큰 항목 기반, 없으면 null)",
+  "whyTop1": ["1위 선택 이유 1", "1위 선택 이유 2"],
   "top1VsTop2": ["1위 vs 2위 핵심 차이 1", "1위 vs 2위 핵심 차이 2"],
-  "caveat": "주의사항 한 문장"
+  "caveat": "주의사항 한 문장 (데이터 한계 등, 없으면 null)"
 }`;
 
 export async function POST(request: Request) {
@@ -196,11 +215,12 @@ export async function POST(request: Request) {
         return inner.match(/"([^"]*)"/g)?.map((s: string) => s.replace(/"/g, "")) ?? [];
       };
       parsed = {
-        summary:     extract("summary"),
-        whyTop1:     extractArr("whyTop1"),
-        top1VsTop2:  extractArr("top1VsTop2"),
-        weightShift: extractArr("weightShift"),
-        caveat:      extract("caveat"),
+        summary:            extract("summary"),
+        personalityProfile: extractArr("personalityProfile"),
+        hiddenPreference:   extract("hiddenPreference"),
+        whyTop1:            extractArr("whyTop1"),
+        top1VsTop2:         extractArr("top1VsTop2"),
+        caveat:             extract("caveat"),
       };
     }
 
