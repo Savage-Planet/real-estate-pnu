@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, ArrowUpRight, ArrowDownRight, Sparkles, Loader2, RefreshCw, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
@@ -682,7 +682,19 @@ function ResultsContent() {
           </div>
         )}
 
-        <div className="mt-8 mb-6 flex justify-center">
+        <div className="mt-8 mb-6 flex flex-col items-center gap-3">
+          {/* 설문 참여 CTA */}
+          <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-4">
+            <p className="text-sm font-semibold text-blue-900">추천 경험이 어떠셨나요?</p>
+            <p className="mt-0.5 text-xs text-blue-600">5~7분 설문으로 연구에 참여해 주세요.</p>
+            <Button
+              className="mt-3 w-full gap-2 bg-blue-600 hover:bg-blue-700"
+              onClick={() => router.push(`/survey?session=${sessionId}`)}
+            >
+              <ClipboardList className="size-4" />
+              설문 참여하기
+            </Button>
+          </div>
           <Button variant="outline" className="gap-2" onClick={() => router.push("/")}>
             <RotateCcw className="size-4" />
             처음부터 다시 하기
