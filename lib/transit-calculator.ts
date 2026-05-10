@@ -1,7 +1,23 @@
 import { calcWalkRoute, type WalkRouteResult, type LatLngPoint } from "./gate-distance";
-import { searchBusRoute, type OdsayRoute } from "./odsay";
 import { busTotalMinutesFromDb } from "./commute-db";
 import type { Property, Building } from "@/types";
+
+/** 서버 프록시를 통해 버스 경로 조회 (CORS 우회) */
+async function fetchBusRouteViaProxy(
+  startLng: number, startLat: number,
+  endLng: number, endLat: number,
+): Promise<{ busMin: number; busPath: LatLngPoint[] } | null> {
+  try {
+    const url = `/api/bus-route?sx=${startLng}&sy=${startLat}&ex=${endLng}&ey=${endLat}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const data = await res.json() as { ok: boolean; busMin?: number; path?: LatLngPoint[] };
+    if (!data.ok || !data.path || data.path.length < 2) return null;
+    return { busMin: data.busMin ?? 0, busPath: data.path };
+  } catch {
+    return null;
+  }
+}
 
 export type { LatLngPoint };
 
@@ -64,17 +80,17 @@ export async function calcTransitForDisplay(
   if (result.totalWalkMin >= DB_WALK_MIN_FOR_BUS_API) {
     busAvailable = false;
     try {
-      const busRoute: OdsayRoute | null = await searchBusRoute(
+      const busResult = await fetchBusRouteViaProxy(
         property.lng, property.lat,
         building.lng, building.lat,
       );
-      if (busRoute) {
-        busMin = busRoute.busTime;
-        busPath = busRoute.path;
+      if (busResult) {
+        busMin = busResult.busMin;
+        busPath = busResult.busPath;
         busAvailable = true;
       }
     } catch {
-      /* ODsay 실패 시 무시 */
+      /* 버스 경로 실패 시 무시 */
     }
   }
 

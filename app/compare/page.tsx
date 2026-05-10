@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import KakaoMap, { type KakaoMapMarker, type KakaoMapPolyline } from "@/components/KakaoMap";
 import { Button } from "@/components/ui/button";
-import { X, GitCompareArrows, Route, ChevronRight } from "lucide-react";
+import { X, GitCompareArrows, Footprints, BusFront, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { calcTransitForDisplay, type TransitResult } from "@/lib/transit-calculator";
 import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
@@ -230,7 +230,12 @@ function MicroCompareView({
   onAnswer: (w: "a" | "b") => void;
 }) {
   const [showModal, setShowModal] = useState(false);
-  const [showRoutes, setShowRoutes] = useState(false);
+  /**
+   * 현재 지도에 표시할 경로:
+   *   null  = 경로 없음
+   *   { side: 'a'|'b', type: 'walk'|'bus' }
+   */
+  const [activeRoute, setActiveRoute] = useState<{ side: "a" | "b"; type: "walk" | "bus" } | null>(null);
 
   const { propertyA: pA, propertyB: pB } = step;
   const {
@@ -240,7 +245,17 @@ function MicroCompareView({
   } = enrichState;
 
   const diffLine = buildDiffLine(pA, pB, transitA, transitB);
-  const hasSlopeData = (slopePolylinesA && slopePolylinesA.length > 0) || (slopePolylinesB && slopePolylinesB.length > 0);
+
+  function toggleRoute(side: "a" | "b", type: "walk" | "bus") {
+    setActiveRoute((prev) =>
+      prev?.side === side && prev.type === type ? null : { side, type },
+    );
+  }
+
+  const showSlopeLegend =
+    activeRoute?.type === "walk" &&
+    ((activeRoute.side === "a" && slopePolylinesA && slopePolylinesA.length > 0) ||
+      (activeRoute.side === "b" && slopePolylinesB && slopePolylinesB.length > 0));
 
   const allMarkers: KakaoMapMarker[] = [
     { lat: pA.lat, lng: pA.lng, label: `A: ${pA.monthly_rent}만`, color: "red" },
@@ -251,32 +266,26 @@ function MicroCompareView({
   }
 
   const routePolylines: KakaoMapPolyline[] = [];
-  if (showRoutes) {
-    if (transitA) {
-      // A 도보: 경사도 색상 우선, 없으면 단색
-      if (slopePolylinesA && slopePolylinesA.length > 0) {
-        routePolylines.push(...slopePolylinesA);
+  if (activeRoute) {
+    const isA = activeRoute.side === "a";
+    const transit = isA ? transitA : transitB;
+    const slopePolylines = isA ? slopePolylinesA : slopePolylinesB;
+    const walkColor = isA ? "#ef4444" : "#3b82f6";
+    const busColor  = isA ? "#dc2626" : "#1d4ed8";
+
+    if (activeRoute.type === "walk" && transit) {
+      if (slopePolylines && slopePolylines.length > 0) {
+        routePolylines.push(...slopePolylines);
       } else {
-        if (transitA.propertyToGateRoute.length >= 2)
-          routePolylines.push({ path: transitA.propertyToGateRoute, color: "#ef4444", weight: 5, opacity: 0.8 });
-        if (transitA.gateToBuildingRoute.length >= 2)
-          routePolylines.push({ path: transitA.gateToBuildingRoute, color: "#f97316", weight: 4, opacity: 0.7 });
+        if (transit.propertyToGateRoute.length >= 2)
+          routePolylines.push({ path: transit.propertyToGateRoute, color: walkColor, weight: 5, opacity: 0.85 });
+        if (transit.gateToBuildingRoute.length >= 2)
+          routePolylines.push({ path: transit.gateToBuildingRoute, color: walkColor, weight: 4, opacity: 0.7 });
       }
-      if (transitA.busPath && transitA.busPath.length >= 2)
-        routePolylines.push({ path: transitA.busPath, color: "#ef4444", weight: 4, opacity: 0.6, style: "dashed" });
     }
-    if (transitB) {
-      // B 도보: 경사도 색상 우선, 없으면 단색
-      if (slopePolylinesB && slopePolylinesB.length > 0) {
-        routePolylines.push(...slopePolylinesB);
-      } else {
-        if (transitB.propertyToGateRoute.length >= 2)
-          routePolylines.push({ path: transitB.propertyToGateRoute, color: "#3b82f6", weight: 5, opacity: 0.8 });
-        if (transitB.gateToBuildingRoute.length >= 2)
-          routePolylines.push({ path: transitB.gateToBuildingRoute, color: "#8b5cf6", weight: 4, opacity: 0.7 });
-      }
-      if (transitB.busPath && transitB.busPath.length >= 2)
-        routePolylines.push({ path: transitB.busPath, color: "#3b82f6", weight: 4, opacity: 0.6, style: "dashed" });
+
+    if (activeRoute.type === "bus" && transit?.busPath && transit.busPath.length >= 2) {
+      routePolylines.push({ path: transit.busPath, color: busColor, weight: 5, opacity: 0.8, style: "dashed" });
     }
   }
 
@@ -317,9 +326,9 @@ function MicroCompareView({
         fitPadding={120}
       />
 
-      {/* 경사도 범례 (경로 표시 + 데이터 있을 때만) */}
-      {showRoutes && hasSlopeData && (
-        <div className="absolute left-3 top-[88px] z-10 rounded-xl bg-white/90 px-2.5 py-2 text-[10px] shadow backdrop-blur-sm">
+      {/* 경사도 범례 (도보 경로 + slope 데이터 있을 때만) */}
+      {showSlopeLegend && (
+        <div className="absolute left-3 top-[92px] z-10 rounded-xl bg-white/90 px-2.5 py-2 text-[10px] shadow backdrop-blur-sm">
           <p className="mb-1.5 font-bold text-gray-600">경사도</p>
           {SLOPE_LEVELS.map((lv) => (
             <div key={lv.color} className="flex items-center gap-1.5 leading-tight">
@@ -332,21 +341,14 @@ function MicroCompareView({
 
       {/* 하단 */}
       <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4">
-        {/* 액션 버튼 */}
-        <div className="mb-2 flex gap-2">
+        {/* 매물 비교 버튼 (단일) */}
+        <div className="mb-2">
           <button
-            onClick={() => { setShowModal(true); setShowRoutes(false); }}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/95 py-2.5 text-sm font-semibold text-gray-700 shadow-md backdrop-blur-sm transition active:scale-[0.97]"
+            onClick={() => { setShowModal(true); setActiveRoute(null); }}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-white/95 py-2.5 text-sm font-semibold text-gray-700 shadow-md backdrop-blur-sm transition active:scale-[0.97]"
           >
             <GitCompareArrows className="size-4" />
-            매물 비교
-          </button>
-          <button
-            onClick={() => setShowRoutes((prev) => !prev)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold shadow-md backdrop-blur-sm transition active:scale-[0.97] ${showRoutes ? "bg-blue-500 text-white" : "bg-white/95 text-gray-700"}`}
-          >
-            <Route className="size-4" />
-            거리 비교
+            매물 상세 비교
           </button>
         </div>
 
@@ -355,11 +357,47 @@ function MicroCompareView({
           {(["a", "b"] as const).map((side) => {
             const p = side === "a" ? pA : pB;
             const transit = side === "a" ? transitA : transitB;
-            const color = side === "a" ? "red" : "blue";
+            const themeColor = side === "a" ? "red" : "blue";
             const nearestAmenities = side === "a" ? nearestAmenitiesA : nearestAmenitiesB;
+            const isWalkActive = activeRoute?.side === side && activeRoute.type === "walk";
+            const isBusActive  = activeRoute?.side === side && activeRoute.type === "bus";
+            const hasBus = transit?.busMin != null && transit.busMin > 0;
             return (
               <div key={side} className="flex flex-1 flex-col rounded-2xl bg-white p-3 shadow-lg">
-                <span className={`mb-1 text-xs font-bold text-${color}-500`}>{side.toUpperCase()}</span>
+                {/* 헤더 */}
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className={`text-xs font-bold text-${themeColor}-500`}>{side.toUpperCase()}</span>
+                  {/* 경로 토글 버튼 */}
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => toggleRoute(side, "walk")}
+                      title="도보 경로"
+                      className={`flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] font-semibold transition ${
+                        isWalkActive
+                          ? themeColor === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
+                          : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                      }`}
+                    >
+                      <Footprints className="size-3" />
+                      도보
+                    </button>
+                    {hasBus && (
+                      <button
+                        onClick={() => toggleRoute(side, "bus")}
+                        title="버스 경로"
+                        className={`flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] font-semibold transition ${
+                          isBusActive
+                            ? themeColor === "red" ? "bg-red-500 text-white" : "bg-blue-500 text-white"
+                            : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                        }`}
+                      >
+                        <BusFront className="size-3" />
+                        버스
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {/* 매물 정보 */}
                 <p className="text-sm font-semibold">{priceLabel(p)}</p>
                 {p.trade_type !== "전세" && (
                   <p className="text-xs text-gray-400">보증금 {p.deposit.toLocaleString()}만</p>
@@ -369,8 +407,8 @@ function MicroCompareView({
                 </p>
                 {transit && transit.walkMin > 0 && (
                   <p className="mt-0.5 text-[11px] text-gray-400">
-                    도보 {transit.walkMin}분
-                    {transit.busMin > 0 && ` · 버스 ${transit.busMin}분`}
+                    🚶 {transit.walkMin}분
+                    {transit.busMin > 0 && `  🚌 ${transit.busMin}분`}
                   </p>
                 )}
                 {nearestAmenities && nearestAmenities.length > 0 && (
@@ -387,7 +425,7 @@ function MicroCompareView({
                 )}
                 <Button
                   size="sm"
-                  className={`mt-2 w-full text-white ${color === "red" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}
+                  className={`mt-2 w-full text-white ${themeColor === "red" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}
                   onClick={() => onAnswer(side)}
                 >
                   {side.toUpperCase()} 선택
