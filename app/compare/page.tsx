@@ -722,11 +722,17 @@ function CompareContent() {
     setEnrichLoading(true);
     setEnrichState({});
     try {
+      // ODsay는 동일 키로 동시 호출 시 거부할 수 있어 순차 실행 + 짧은 간격
       const [transitA, transitB] = await withTimeout(
-        Promise.all([calcTransitForDisplay(pA, bld), calcTransitForDisplay(pB, bld)]),
+        (async () => {
+          const a = await calcTransitForDisplay(pA, bld);
+          await new Promise((r) => setTimeout(r, 350));
+          const b = await calcTransitForDisplay(pB, bld);
+          return [a, b] as const;
+        })(),
         ENRICH_TRANSIT_TIMEOUT_MS,
         "경로 계산",
-      ).catch(() => [undefined, undefined]);
+      ).catch(() => [undefined, undefined] as const);
 
       let densityA: number | undefined;
       let densityB: number | undefined;

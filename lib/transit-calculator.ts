@@ -110,25 +110,6 @@ export async function calcTransitForDisplay(
     busReason = `walk_too_short(${result.totalWalkMin}min)`;
   }
 
-  // 서버 프록시가 실패한 경우 → 브라우저에서 ODsay 직접 호출 시도
-  // (NEXT_PUBLIC 키는 브라우저에서 등록된 도메인으로 호출 가능)
-  if (busPath.length < 2 && typeof window !== "undefined") {
-    try {
-      const { searchBusRoute } = await import("./odsay");
-      const direct = await searchBusRoute(property.lng, property.lat, building.lng, building.lat);
-      if (direct && direct.path.length >= 2) {
-        busMin = direct.busTime > 0 ? direct.busTime : busMin;
-        busPath = direct.path;
-        busAvailable = true;
-        busReason = undefined;
-      } else {
-        busReason = (busReason ?? "") + "+direct_null";
-      }
-    } catch (e) {
-      busReason = (busReason ?? "") + `+direct_err:${String(e).slice(0, 30)}`;
-    }
-  }
-
   return {
     walkMin: result.totalWalkMin,
     walkDistanceM: result.totalWalkDistanceM,
