@@ -10,15 +10,11 @@ import { NextResponse } from "next/server";
  *       | { ok: false, reason }
  */
 export async function GET(request: Request) {
-  // ODsay는 등록된 URI와 Referer 헤더를 비교해 인증한다.
-  // Vercel 서버리스 함수는 브라우저의 Referer를 전달하지 않으므로
-  // 프로덕션 도메인을 하드코딩 폴백으로 사용한다.
-  const PROD_ORIGIN = "https://real-estate-pnu-ngyh.vercel.app";
-  const incomingReferer =
-    request.headers.get("referer") ||
-    `${PROD_ORIGIN}/compare`;
-  let originForOdsay = PROD_ORIGIN;
-  try { originForOdsay = new URL(incomingReferer).origin; } catch { /* ignore */ }
+  // ODsay에 등록된 URI로 Referer를 고정한다.
+  // 사용자가 어떤 도메인(real-estate-pnu.vercel.app 등)에서 접속해도
+  // ODsay 인증은 등록된 도메인(real-estate-pnu-ngyh.vercel.app)으로 통과한다.
+  const ODSAY_REGISTERED_REFERER = "https://real-estate-pnu-ngyh.vercel.app/compare";
+  const ODSAY_REGISTERED_ORIGIN  = "https://real-estate-pnu-ngyh.vercel.app";
 
   const { searchParams } = new URL(request.url);
   const sx = searchParams.get("sx");
@@ -46,8 +42,8 @@ export async function GET(request: Request) {
     const res = await fetch(url.toString(), {
       signal: AbortSignal.timeout(12_000),
       headers: {
-        "Referer": incomingReferer,
-        "Origin": originForOdsay,
+        "Referer": ODSAY_REGISTERED_REFERER,
+        "Origin":  ODSAY_REGISTERED_ORIGIN,
       },
     });
     if (!res.ok) {
@@ -60,9 +56,8 @@ export async function GET(request: Request) {
 
     if (json.error) {
       const errMsg = `odsay_error:${JSON.stringify(json.error)}`;
-      console.error("[bus-route proxy]", errMsg, "referer_used:", incomingReferer);
-      // referer_used 필드를 포함해 디버깅 가능하게 반환
-      return NextResponse.json({ ok: false, reason: errMsg, referer_used: incomingReferer, v: 3 });
+      console.error("[bus-route proxy]", errMsg, "referer_used:", ODSAY_REGISTERED_REFERER);
+      return NextResponse.json({ ok: false, reason: errMsg, referer_used: ODSAY_REGISTERED_REFERER, v: 4 });
     }
 
     const paths = (json as any)?.result?.path;
