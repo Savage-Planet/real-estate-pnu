@@ -193,7 +193,7 @@ export async function POST(request: Request) {
       const extractArr = (key: string): string[] => {
         const r = new RegExp(`"${key}"\\s*:\\s*\\[([^\\]]+)\\]`, "s");
         const inner = textContent.match(r)?.[1] ?? "";
-        return inner.match(/"([^"]*)"/g)?.map((s) => s.replace(/"/g, "")) ?? [];
+        return inner.match(/"([^"]*)"/g)?.map((s: string) => s.replace(/"/g, "")) ?? [];
       };
       parsed = {
         summary:     extract("summary"),
