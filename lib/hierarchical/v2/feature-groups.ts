@@ -1,7 +1,7 @@
 /**
  * feature-groups.ts
  * ==================
- * 기존 15차원 특징 공간을 4개의 의미 카테고리로 분류.
+ * 22차원 특징 공간을 4개의 의미 카테고리로 분류.
  *
  * GAI (Generalized Additive Independence) 구조:
  *   U(p) = w₀·u_거리(p) + w₁·u_가격(p) + w₂·u_안전(p) + w₃·u_편의(p)
@@ -63,6 +63,8 @@ export const NUM_CATEGORIES = 4;
  *  dim 17: 경비원      ← 있을수록 좋음 → invert=false
  *  dim 18: 카드키      ← 있을수록 좋음 → invert=false
  *  dim 19: 경사도      ← feature-engineer가 "완만할수록↑" 처리 → invert=false
+ *  dim 20: 벌레 지수   ← 하=1.0, 상=0.0 정규화 완료 → invert=false
+ *  dim 21: 가로등      ← 많을수록 좋음 → invert=false
  */
 interface DimDef {
   idx: number;
@@ -97,6 +99,8 @@ export const FEATURE_GROUPS: Record<string, { catIdx: number; dims: DimDef[]; la
       { idx: 16, invert: false }, // 인터폰
       { idx: 17, invert: false }, // 경비원
       { idx: 18, invert: false }, // 카드키
+      { idx: 20, invert: false }, // 벌레 지수 (하=1, 상=0)
+      { idx: 21, invert: false }, // 가로등 밀도
     ],
     label: "안전",
   },
@@ -124,7 +128,7 @@ export const GROUP_KEYS: GroupKey[] = ["distance", "price", "safety", "convenien
 // ──────────────────────────────────────────────────────────
 
 /**
- * 15D 특징 벡터 → 4D 카테고리 점수 벡터
+ * 22D 특징 벡터 → 4D 카테고리 점수 벡터
  * invert=true인 dim은 (1 - v)로 변환 → 높은 점수 = 해당 카테고리에서 좋은 매물
  *
  * 특징 벡터는 [0,1] 범위이므로 1-v 변환이 유효.
@@ -141,7 +145,7 @@ export function toCategoryVector(fv: FeatureVector): CategoryVector {
 }
 
 /**
- * 15D 숨겨진 가중치 벡터 → 4D 카테고리 선호도 벡터
+ * 22D 숨겨진 가중치 벡터 → 4D 카테고리 선호도 벡터
  *
  * 가중치 벡터에 대한 invert는 부호 반전(-v):
  *   "월세 dim의 weight=-0.9" + "invert=true" → 0.9 (양수, 가격 카테고리 선호)
@@ -200,7 +204,7 @@ export function categoryIdxToKey(idx: number): GroupKey {
 }
 
 /**
- * 15D 특징 공간 위 카테고리별 서브 벡터 추출 (invert 적용)
+ * 22D 특징 공간 위 카테고리별 서브 벡터 추출 (invert 적용)
  * 반환값도 "높을수록 좋음" 기준으로 정규화됨
  */
 export function extractSubVector(fv: FeatureVector, groupKey: GroupKey): number[] {

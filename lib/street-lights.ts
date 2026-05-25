@@ -70,3 +70,13 @@ export function calcStreetLightDensity(
   if (distanceM <= 0) return 0;
   return (lightCount / distanceM) * 100;
 }
+
+/** 특정 좌표 반경 내 가로등 수 (피처 벡터 사전 계산용) */
+export function countLightsNearPoint(
+  lights: StreetLight[],
+  lat: number,
+  lng: number,
+  radiusM: number = 100,
+): number {
+  return lights.filter((l) => haversine(l.lat, l.lng, lat, lng) <= radiusM).length;
+}

@@ -4,7 +4,7 @@ import { calcCommuteForStats } from "./transit-calculator";
 
 export type FeatureVector = number[];
 
-export const FEATURE_DIM = 20;
+export const FEATURE_DIM = 22;
 
 /**
  * 학습용 통학 특징. 도보·버스 총시간은 DB 기준(computeStatsWithCommute).
@@ -27,9 +27,14 @@ export interface FeatureStats {
   commuteWalkMin: { min: number; max: number };
   /** DB 버스 총분 — 짧을수록 φ 높게 정규화 */
   commuteBusTotalMin: { min: number; max: number };
+  /** 매물 반경 100m 내 가로등 수 — 많을수록 φ 높게 정규화 */
+  streetLightCount: { min: number; max: number };
 }
 
-export function computeStats(properties: Property[]): FeatureStats {
+export function computeStats(
+  properties: Property[],
+  streetLightById?: Map<string, number>,
+): FeatureStats {
   const vals = (fn: (p: Property) => number) => properties.map(fn);
   const minMax = (arr: number[]) => ({
     min: Math.min(...arr),
@@ -39,6 +44,14 @@ export function computeStats(properties: Property[]): FeatureStats {
   const noiseLevels = properties
     .map((p) => p.noise_level)
     .filter((n): n is number => n != null && n > 0);
+
+  let streetLightCount = { min: 0, max: 30 };
+  if (streetLightById && streetLightById.size > 0) {
+    const counts = properties.map((p) => streetLightById.get(p.id) ?? 0);
+    const lo = Math.min(...counts);
+    const hi = Math.max(...counts);
+    streetLightCount = { min: lo, max: hi > lo ? hi : lo + 1 };
+  }
 
   return {
     monthlyRent: minMax(vals((p) => p.monthly_rent)),
@@ -51,6 +64,7 @@ export function computeStats(properties: Property[]): FeatureStats {
       : { min: 0, max: 100 },
     commuteWalkMin: { min: 5, max: 45 },
     commuteBusTotalMin: { min: 0, max: 90 },
+    streetLightCount,
   };
 }
 
@@ -61,8 +75,9 @@ export function computeStats(properties: Property[]): FeatureStats {
 export async function computeStatsWithCommute(
   properties: Property[],
   building: Building,
+  streetLightById?: Map<string, number>,
 ): Promise<{ stats: FeatureStats; commuteById: Map<string, CommuteFeatures> }> {
-  const base = computeStats(properties);
+  const base = computeStats(properties, streetLightById);
   const commuteById = new Map<string, CommuteFeatures>();
   const transits = await Promise.all(
     properties.map((p) => calcCommuteForStats(p, building)),
@@ -172,10 +187,28 @@ function slopeFeatureValue(slope: number | null | undefined): number {
   return 1 - clamped / 20;
 }
 
+/** 벌레 발생 가능성: 하→1.0, 중→0.5, 상→0.0, null→0.5 */
+function bugRiskScore(p: Property): number {
+  const r = p.bug_risk;
+  if (!r) return 0.5;
+  if (r === "하") return 1.0;
+  if (r === "중") return 0.5;
+  return 0.0; // '상'
+}
+
+/** 매물 반경 내 가로등 수 — 많을수록 ↑. null → 0.5 */
+function streetLightScore(count: number | undefined, stats: FeatureStats): number {
+  if (count == null) return 0.5;
+  const { min, max } = stats.streetLightCount;
+  if (max <= min) return 0.5;
+  return Math.min(1, Math.max(0, (count - min) / (max - min)));
+}
+
 export function toFeatureVector(
   property: Property,
   stats: FeatureStats,
   commute?: CommuteFeatures | null,
+  streetLightById?: Map<string, number>,
 ): FeatureVector {
   const [south, north] = directionSouthNorthOneHot(property.direction);
   const walkF = commuteWalkFeatureValue(commute?.walkMin, stats);
@@ -203,6 +236,9 @@ export function toFeatureVector(
     property.has_card_key ? 1 : 0,
     // 거리 경사도 dim (idx 19) — 완만할수록 ↑
     slopeFeatureValue(property.walk_slope_avg),
+    // 생활환경 dim (idx 20-21)
+    bugRiskScore(property),                                               // 벌레 지수: 하↑ 상↓
+    streetLightScore(streetLightById?.get(property.id), stats),          // 가로등: 많을수록 ↑
   ];
 }
 
@@ -215,6 +251,7 @@ export const FEATURE_NAMES = [
   "통학(버스 총시간)",
   "방범창", "인터폰", "경비원", "카드키",
   "경사도",
+  "벌레 지수", "가로등",
 ];
 
 export function getMeanWeightLabels(

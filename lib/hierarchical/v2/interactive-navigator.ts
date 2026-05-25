@@ -272,6 +272,7 @@ export class InteractiveNavigator {
     stats: FeatureStats,
     commuteById: Map<string, CommuteFeatures>,
     initialRanking?: number[],
+    streetLightById?: Map<string, number>,
   ) {
     this.properties = properties;
     this.stats = stats;
@@ -279,7 +280,7 @@ export class InteractiveNavigator {
 
     // Feature vector 캐시 미리 계산
     for (const p of properties) {
-      const fv = toFeatureVector(p, stats, commuteById.get(p.id));
+      const fv = toFeatureVector(p, stats, commuteById.get(p.id), streetLightById);
       this.fvCache.set(p.id, fv);
     }
 
@@ -453,8 +454,9 @@ export class InteractiveNavigator {
     this.microRound++;
 
     const converged = microPosteriorConcentration(this.microPosterior) >= MICRO_CONCENTRATION_THRESHOLD;
+    const maxRounds = this._isExtraPhase ? this.extraMaxRounds : MAX_MICRO_ROUNDS;
 
-    if (converged || this.microRound >= MAX_MICRO_ROUNDS) {
+    if (converged || this.microRound >= maxRounds) {
       this.finishMicro();
     } else {
       this.pickNextMicroPair();
@@ -543,12 +545,33 @@ export class InteractiveNavigator {
     this.topPropertyIds = scored.slice(0, TOP_K).map((s) => s.id);
   }
 
+  /**
+   * 기본 비교가 끝난 후 추가 라운드를 진행.
+   * phase를 micro로 되돌리고, maxRounds만큼 추가 비교 후 재수렴.
+   */
+  continueExtra(maxRounds: number): void {
+    if (this.phase !== "done") return;
+    // micro 상태를 유지한 채 phase만 되돌린다.
+    this.phase = "micro";
+    this.microRound = 0;
+    this.extraMaxRounds = maxRounds;
+    this._isExtraPhase = true;
+    this.pickNextMicroPair();
+  }
+
+  private extraMaxRounds = 0;
+  private _isExtraPhase = false;
+
   // ──────────────────────────────────────────────────────────
   // 공개 유틸 (React 상태 관리용)
   // ──────────────────────────────────────────────────────────
 
   get phase_(): "macro" | "micro" | "done" {
     return this.phase;
+  }
+
+  get isExtraPhase(): boolean {
+    return this._isExtraPhase;
   }
 
   get macroConcentration(): number {

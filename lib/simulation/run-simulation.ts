@@ -9,10 +9,12 @@ import {
   cosineSimilarity,
   normalizeToUnitBall,
   randn,
+  userWeightsToPrior,
   type RewardModel,
 } from "../reward-model";
 import { selectPair } from "../query-selector";
 import { computeRoundMetrics, type RoundMetrics } from "../convergence";
+import { deriveBwmFromHidden, solveBwmWeights } from "../hierarchical/v2/bwm-initializer";
 
 export interface SimulationConfig {
   candidateCount: number;
@@ -21,6 +23,25 @@ export interface SimulationConfig {
   hiddenMatchCosine: number;
   initialWeights?: Record<string, number>;
   silent?: boolean;
+  /** 외부에서 주입된 히든 가중치 (공정 비교를 위해 flat/hierarchical 동일 사용) */
+  hiddenWeightOverride?: FeatureVector;
+  /**
+   * 쿼리 선택 방식
+   * "random" → F1: 랜덤 쌍 선택
+   * "evr"    → F2+: Expected Volume Removal (기본)
+   */
+  queryMode?: "random" | "evr";
+  /**
+   * 사용자 슬라이더 기반 prior 사용 여부 (F3+)
+   * true이면 initialWeights 기반 priorMean으로 모델 초기화
+   */
+  usePrior?: boolean;
+  /**
+   * BWM prior 초기화 사용 여부 (F4)
+   * true이면 hiddenW에서 BWM 가중치를 도출해 priorMean으로 주입
+   * Rezaei (2015) Best-Worst Method 기반
+   */
+  useBwm?: boolean;
 }
 
 export interface SimulationResult {
@@ -75,10 +96,33 @@ export function runSimulation(
   commuteById: Map<string, CommuteFeatures>,
 ): SimulationResult {
   const dim = FEATURE_DIM;
-  const hiddenW = generateRandomUnitBallVector(dim);
+  const hiddenW = config.hiddenWeightOverride ?? generateRandomUnitBallVector(dim);
   const initialSliders = config.initialWeights ?? generateRandomSliderWeights();
 
-  let model: RewardModel = createModel(dim, initialSliders);
+  const queryMode = config.queryMode ?? "evr";
+  const usePrior = config.usePrior ?? false;
+  const useBwm = config.useBwm ?? false;
+
+  // prior 구성
+  let priorWeights: Record<string, number> | undefined;
+  if (useBwm) {
+    // BWM: hiddenW에서 중요도 비율 도출 → priorMean 초기화 (Rezaei 2015)
+    const bwmInput = deriveBwmFromHidden(hiddenW);
+    const { weights: bwmW } = solveBwmWeights(bwmInput);
+    // BWM 가중치를 slider 기반 prior 형식으로 변환 (수렴용 근사)
+    const keys = [
+      "monthlyRent", "deposit", "maintenanceFee", "area", "rooms",
+      "directionSouth", "directionSouth", "parking", "cctv", "elevator",
+      "year", "options", "noise", "commute", "busAvailable",
+    ];
+    priorWeights = Object.fromEntries(
+      keys.map((k, i) => [k, Math.round(Math.abs(bwmW[i] ?? 0.5) * 100)])
+    );
+  } else if (usePrior) {
+    priorWeights = initialSliders;
+  }
+
+  let model: RewardModel = createModel(dim, priorWeights);
   const initialPrior = getMeanWeight(model);
 
   const usedPairs = new Set<string>();
@@ -93,7 +137,27 @@ export function runSimulation(
   let totalRounds = 0;
 
   for (let round = 1; round <= config.absoluteMaxRounds; round++) {
-    const pair = selectPair(model, properties, stats, usedPairs, commuteById);
+    let pair;
+    if (queryMode === "random") {
+      // F1: 랜덤 쌍 선택
+      let a: Property;
+      let b: Property;
+      let pairKey: string;
+      let attempts = 0;
+      do {
+        const idxA = Math.floor(Math.random() * properties.length);
+        let idxB = Math.floor(Math.random() * (properties.length - 1));
+        if (idxB >= idxA) idxB++;
+        a = properties[idxA];
+        b = properties[idxB];
+        pairKey = [a.id, b.id].sort().join("-");
+        attempts++;
+      } while (usedPairs.has(pairKey) && attempts < properties.length * 2);
+      pair = { a, b, expectedVolumeRemoval: 0 };
+    } else {
+      // F2+: EVR 기반 최적 쌍 선택 (Brochu et al. 2007)
+      pair = selectPair(model, properties, stats, usedPairs, commuteById);
+    }
     const pairKey = [pair.a.id, pair.b.id].sort().join("-");
     usedPairs.add(pairKey);
 

@@ -6,7 +6,9 @@ import type { Property, Building } from "@/types";
  */
 export function busTotalMinutesFromDb(property: Property, building: Building): number | null {
   const pg = property.bus_to_gate_min;
+  // 매물→정문 구간이 없으면 전체 버스 시간 미확정 → null 반환
+  // (건물 구간만 있으면 모든 매물에 동일한 값이 표시되는 버그 방지)
+  if (pg == null) return null;
   const bf = building.bus_from_gate_min;
-  if (pg == null && bf == null) return null;
-  return (pg ?? 0) + (bf ?? 0);
+  return pg + (bf ?? 0);
 }

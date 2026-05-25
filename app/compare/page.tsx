@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { X, GitCompareArrows, Footprints, BusFront, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { calcTransitForDisplay, type TransitResult } from "@/lib/transit-calculator";
-import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity } from "@/lib/street-lights";
+import { loadStreetLights, filterLightsAlongRoute, calcStreetLightDensity, countLightsNearPoint } from "@/lib/street-lights";
 import {
   computeStatsWithCommute,
   type CommuteFeatures,
@@ -34,6 +34,7 @@ import {
   type MicroStep,
 } from "@/lib/hierarchical/v2/interactive-navigator";
 import { CATEGORY_NAMES } from "@/lib/hierarchical/v2/feature-groups";
+import { agentRowToProperty, type AgentPropertyRow } from "@/lib/agent-property-adapter";
 
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
 const ENRICH_TRANSIT_TIMEOUT_MS = 60_000;
@@ -574,9 +575,9 @@ function MicroCompareView({
                   <>
                     <CmpRow
                       label="도보"
-                      a={transitA ? `${transitA.walkMin}분` : "-"}
-                      b={transitB ? `${transitB.walkMin}분` : "-"}
-                      better={transitA && transitB ? betterLower(transitA.walkMin, transitB.walkMin) : null}
+                      a={transitA && transitA.walkMin > 0 ? `${transitA.walkMin}분` : "-"}
+                      b={transitB && transitB.walkMin > 0 ? `${transitB.walkMin}분` : "-"}
+                      better={transitA && transitB && transitA.walkMin > 0 && transitB.walkMin > 0 ? betterLower(transitA.walkMin, transitB.walkMin) : null}
                     />
                     <CmpRow
                       label="버스"
@@ -651,6 +652,10 @@ function CompareContent() {
   // 현재 스텝 (React state로 재렌더 트리거)
   const [step, setStep] = useState<NavigatorStep | null>(null);
 
+  // 추가 비교 모달
+  const [showExtraModal, setShowExtraModal] = useState(false);
+  const [pendingDoneStep, setPendingDoneStep] = useState<NavigatorStep | null>(null);
+
   // Micro 단계 경로·가로등 enrich 상태
   const [enrichState, setEnrichState] = useState<PairEnrichState>({});
   const [enrichLoading, setEnrichLoading] = useState(false);
@@ -693,15 +698,49 @@ function CompareContent() {
         if (maxDeposit < 50000) query = query.lte("deposit", maxDeposit);
 
         const { data: props, error: pErr } = await query;
-        if (pErr || !props || props.length < 2 || !bld) {
-          setInitError(pErr?.message ?? "매물이 부족합니다 (최소 2개 필요)");
+        if (pErr || !props || !bld) {
+          setInitError(pErr?.message ?? "데이터를 불러올 수 없습니다");
           return;
         }
 
-        const typed = props as Property[];
-        const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
+        // agent_properties (is_active=true) 도 학습에 포함
+        const { data: agentProps } = await supabase
+          .from("agent_properties")
+          .select("*")
+          .eq("is_active", true);
 
-        const nav = new InteractiveNavigator(typed, stats, commuteById, initialRanking.length > 0 ? initialRanking : undefined);
+        const agentConverted = (agentProps ?? []).map((row) =>
+          agentRowToProperty(row as AgentPropertyRow),
+        );
+
+        // 중복 방지: agent 매물은 정규 DB에 없는 것만 (id 기준)
+        const regularIds = new Set((props as Property[]).map((p) => p.id));
+        const mergedProps = [
+          ...(props as Property[]),
+          ...agentConverted.filter((p) => !regularIds.has(p.id)),
+        ];
+
+        if (mergedProps.length < 2) {
+          setInitError("매물이 부족합니다 (최소 2개 필요)");
+          return;
+        }
+
+        const typed = mergedProps;
+
+        // 가로등 피처 사전 계산 (실패 시 undefined — 피처 0.5 중립 처리)
+        let streetLightById: Map<string, number> | undefined;
+        try {
+          const allLights = await loadStreetLights();
+          if (allLights.length > 0) {
+            streetLightById = new Map(
+              typed.map((p) => [p.id, countLightsNearPoint(allLights, p.lat, p.lng, 100)]),
+            );
+          }
+        } catch { /* 가로등 선택사항 */ }
+
+        const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building, streetLightById);
+
+        const nav = new InteractiveNavigator(typed, stats, commuteById, initialRanking.length > 0 ? initialRanking : undefined, streetLightById);
         navRef.current = nav;
         const s = nav.current();
         setStep(s);
@@ -847,14 +886,38 @@ function CompareContent() {
     setStep(next);
 
     if (next.type === "done") {
-      let url = resultsUrl(next.topPropertyIds, next.categoryLabel);
-      const weights = nav.learnedWeightSummary;
-      if (weights.length > 0) {
-        url += `&v2weights=${encodeURIComponent(JSON.stringify(weights))}`;
+      // 추가 비교 모달 표시 (이미 extra 라운드 중이면 바로 결과로)
+      if (!nav.isExtraPhase) {
+        setPendingDoneStep(next);
+        setShowExtraModal(true);
+      } else {
+        navigateToResults(nav, next);
       }
-      router.push(url);
     }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const navigateToResults = useCallback((nav: InteractiveNavigator, doneStep: NavigatorStep) => {
+    if (doneStep.type !== "done") return;
+    let url = resultsUrl(doneStep.topPropertyIds, doneStep.categoryLabel);
+    const weights = nav.learnedWeightSummary;
+    if (weights.length > 0) {
+      url += `&v2weights=${encodeURIComponent(JSON.stringify(weights))}`;
+    }
+    router.push(url);
   }, [router, resultsUrl]);
+
+  const handleExtraConfirm = useCallback((doExtra: boolean) => {
+    setShowExtraModal(false);
+    const nav = navRef.current;
+    if (!nav || !pendingDoneStep) return;
+    if (!doExtra) {
+      navigateToResults(nav, pendingDoneStep);
+      return;
+    }
+    nav.continueExtra(10);
+    const next = nav.current();
+    setStep(next);
+  }, [pendingDoneStep, navigateToResults]);
 
   // ── 로딩 ──
   if (loading) {
@@ -928,6 +991,29 @@ function CompareContent() {
           />
         </motion.div>
       </AnimatePresence>
+    );
+  }
+
+  // 추가 비교 모달
+  if (showExtraModal) {
+    return (
+      <main className="flex h-dvh flex-col items-center justify-center gap-6 px-6">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+          <h2 className="mb-2 text-lg font-bold text-gray-900">더 정밀한 추천을 원하시나요?</h2>
+          <p className="mb-5 text-sm text-gray-500">
+            추가 비교(최대 10회)를 진행하면 AI가 선호도를 더 정확하게 파악합니다.
+            수렴이 감지되면 즉시 종료됩니다.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="outline" className="flex-1" onClick={() => handleExtraConfirm(false)}>
+              아니오, 결과 보기
+            </Button>
+            <Button className="flex-1" onClick={() => handleExtraConfirm(true)}>
+              예, 계속하기
+            </Button>
+          </div>
+        </div>
+      </main>
     );
   }
 

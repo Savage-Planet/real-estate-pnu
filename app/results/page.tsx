@@ -34,6 +34,7 @@ import {
   calcAmenityProximityScore,
   type NearestAmenity,
 } from "@/lib/amenities";
+import { agentRowToProperty, type AgentPropertyRow } from "@/lib/agent-property-adapter";
 
 const PAGE_SIZE = 10;
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
@@ -43,6 +44,12 @@ interface ScoredProperty {
   score: number;
   walkMin?: number;
   nearestAmenities?: NearestAmenity[];
+  // agent 매물 전용 필드
+  agentId?: string;
+  agentUsername?: string;
+  agentPhone?: string;
+  agentOfficeAddress?: string;
+  photoUrls?: string[];
 }
 
 function priceLabel(p: Property): string {
@@ -110,8 +117,14 @@ function ResultsContent() {
   const [weightLabels, setWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
   const [initialWeightLabels, setInitialWeightLabels] = useState<Array<{ name: string; value: number }>>([]);
 
-  const [detailProperty, setDetailProperty] = useState<Property | null>(null);
+  const [detailProperty, setDetailProperty] = useState<ScoredProperty | null>(null);
   const [roundMetrics, setRoundMetrics] = useState<RoundMetrics[]>([]);
+
+  // 반응 추적 상태
+  const [interactionId, setInteractionId] = useState<string | null>(null);
+  const [q1Answer, setQ1Answer] = useState<boolean | null>(null);
+  const [q2Answer, setQ2Answer] = useState<boolean | null>(null);
+  const [showPhone, setShowPhone] = useState(false);
 
   interface Explanation {
     summary?: string;
@@ -155,7 +168,33 @@ function ResultsContent() {
 
       const typed = props as Property[];
       const comps = comparisons as Comparison[];
-      const { stats, commuteById } = await computeStatsWithCommute(typed, bld as Building);
+
+      // agent_properties (활성) 로드 — 결과 표시용 + stats 합산용
+      const { data: agentRows } = await supabase
+        .from("agent_properties")
+        .select("*, agent_profiles(username, phone, office_address)")
+        .eq("is_active", true);
+
+      // agentRow → Property 변환 (agent_profiles join 처리)
+      type AgentRowWithProfile = AgentPropertyRow & {
+        agent_profiles?: { username: string; phone: string; office_address: string } | null;
+      };
+      const agentConverted = (agentRows ?? []).map((row: AgentRowWithProfile) => ({
+        property: agentRowToProperty(row as AgentPropertyRow),
+        agentId: row.agent_id,
+        agentUsername: row.agent_profiles?.username,
+        agentPhone: row.agent_profiles?.phone,
+        agentOfficeAddress: row.agent_profiles?.office_address,
+        photoUrls: row.photo_urls ?? [],
+      }));
+
+      // 통계는 전체(regular + agent) 합산
+      const regularIds = new Set(typed.map((p) => p.id));
+      const allForStats = [
+        ...typed,
+        ...agentConverted.map((a) => a.property).filter((p) => !regularIds.has(p.id)),
+      ];
+      const { stats, commuteById } = await computeStatsWithCommute(allForStats, bld as Building);
 
       // Compute initial weights from user preferences
       let userWeights: Record<string, number> | undefined;
@@ -201,30 +240,33 @@ function ResultsContent() {
       }
       setRoundMetrics(metricsHistory);
 
+      // ── agent 매물 스코어링 (결과 표시는 agent 매물만) ──
+      // v2 topIds를 기준으로 agent 매물에 점수 부여
       let scored: ScoredProperty[];
-      if (isV2 && topIdsParam) {
-        // v2: topIds 순서대로 우선 정렬, 나머지는 뒤에 붙임
-        const topIds = topIdsParam.split(",").filter(Boolean);
-        const topIdSet = new Set(topIds);
-        const propMap = new Map(typed.map((p) => [p.id, p]));
-        const topProps: ScoredProperty[] = topIds
-          .map((id, rank) => {
-            const p = propMap.get(id);
-            if (!p) return null;
-            // 지수 감쇠: 1위=1.0, 2위≈0.85, 3위≈0.72, 4위≈0.61…
-            return { property: p, score: Math.pow(0.85, rank) };
-          })
-          .filter((x): x is ScoredProperty => x !== null);
-        const rest: ScoredProperty[] = typed
-          .filter((p) => !topIdSet.has(p.id))
-          .map((p, i) => ({ property: p, score: Math.max(0, 0.3 - i * 0.01) }));
-        scored = [...topProps, ...rest];
-      } else {
-        scored = typed.map((p) => ({
-          property: p,
-          score: scoreProperty(model, toFeatureVector(p, stats, commuteById.get(p.id))),
-        }));
+
+      if (agentConverted.length > 0) {
+        // agent 매물 스코어링: 모델 점수로 랭킹
+        if (isV2 && topIdsParam) {
+          const topIds = topIdsParam.split(",").filter(Boolean);
+          const topIdSet = new Set(topIds);
+          // agent 매물 중 topIds에 포함된 것은 높은 순위, 나머지는 모델 점수
+          scored = agentConverted.map((a) => {
+            const rankIdx = topIds.indexOf(a.property.id);
+            const score = rankIdx >= 0
+              ? Math.pow(0.85, rankIdx)
+              : scoreProperty(model, toFeatureVector(a.property, stats, commuteById.get(a.property.id)));
+            return { ...a, score };
+          });
+        } else {
+          scored = agentConverted.map((a) => ({
+            ...a,
+            score: scoreProperty(model, toFeatureVector(a.property, stats, commuteById.get(a.property.id))),
+          }));
+        }
         scored.sort((a, b) => b.score - a.score);
+      } else {
+        // agent 매물이 없으면 빈 목록 (or fallback to regular? 현재는 빈 목록)
+        scored = [];
       }
 
       // 같은 위치(lat/lng 소수점 4자리) 중복 매물 제거: 순위가 높은 것만 유지
@@ -248,7 +290,12 @@ function ResultsContent() {
         normalized.map((s) => calcWalkRoute(s.property, buildingId).catch(() => null)),
       );
       for (let i = 0; i < normalized.length; i++) {
-        if (walkResults[i]) normalized[i].walkMin = walkResults[i]!.totalWalkMin;
+        if (walkResults[i]) {
+          normalized[i].walkMin = walkResults[i]!.totalWalkMin;
+        } else if (normalized[i].property.walk_to_gate_min != null) {
+          // agent 매물은 이미 백필된 walk_to_gate_min을 사용
+          normalized[i].walkMin = normalized[i].property.walk_to_gate_min!;
+        }
       }
 
       // 편의시설 로딩 및 점수 반영
@@ -366,9 +413,43 @@ function ResultsContent() {
     }
   }
 
-  function handleCardClick(propertyId: string) {
+  async function handleCardClick(propertyId: string) {
     const found = ranked.find((r) => r.property.id === propertyId);
-    if (found) setDetailProperty(found.property);
+    if (!found) return;
+    setDetailProperty(found);
+    setQ1Answer(null);
+    setQ2Answer(null);
+    setShowPhone(false);
+    setInteractionId(null);
+
+    // property_interactions 에 view 기록
+    const { data } = await supabase
+      .from("property_interactions")
+      .insert({ agent_property_id: propertyId, session_id: sessionId })
+      .select("id")
+      .single();
+    if (data) setInteractionId((data as { id: string }).id);
+  }
+
+  async function recordQ1(liked: boolean) {
+    setQ1Answer(liked);
+    if (interactionId) {
+      await supabase
+        .from("property_interactions")
+        .update({ liked })
+        .eq("id", interactionId);
+    }
+  }
+
+  async function recordQ2(requested: boolean) {
+    setQ2Answer(requested);
+    if (requested) setShowPhone(true);
+    if (interactionId) {
+      await supabase
+        .from("property_interactions")
+        .update({ requested_phone: requested })
+        .eq("id", interactionId);
+    }
   }
 
   const pageItems = ranked.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -642,24 +723,31 @@ function ResultsContent() {
         </div>
 
         {/* Property list */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="flex flex-col gap-3"
-        >
-          {pageItems.map((item, i) => (
-            <PropertyListCard
-              key={item.property.id}
-              property={item.property}
-              rank={page * PAGE_SIZE + i + 1}
-              score={item.score}
-              walkMin={item.walkMin}
-              nearestAmenities={item.nearestAmenities}
-              onClick={() => handleCardClick(item.property.id)}
-            />
-          ))}
-        </motion.div>
+        {ranked.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed py-12 text-center text-gray-400">
+            <p className="text-sm font-medium">등록된 중개사 매물이 없습니다</p>
+            <p className="mt-1 text-xs">중개사가 매물을 등록하면 여기에 표시됩니다.</p>
+          </div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="flex flex-col gap-3"
+          >
+            {pageItems.map((item, i) => (
+              <PropertyListCard
+                key={item.property.id}
+                property={item.property}
+                rank={page * PAGE_SIZE + i + 1}
+                score={item.score}
+                walkMin={item.walkMin}
+                nearestAmenities={item.nearestAmenities}
+                onClick={() => void handleCardClick(item.property.id)}
+              />
+            ))}
+          </motion.div>
+        )}
 
         {totalPages > 1 && (
           <div className="mt-6 flex items-center justify-center gap-2">
@@ -681,7 +769,7 @@ function ResultsContent() {
         </div>
       </div>
 
-      {/* Property detail modal - uses our own DB data */}
+      {/* Property detail modal */}
       <AnimatePresence>
         {detailProperty && (
           <motion.div
@@ -693,7 +781,7 @@ function ResultsContent() {
           >
             <motion.div
               className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl"
-              style={{ maxHeight: "75vh" }}
+              style={{ maxHeight: "85vh" }}
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -707,51 +795,67 @@ function ResultsContent() {
                 </button>
               </div>
 
-              <div className="overflow-y-auto space-y-4" style={{ maxHeight: "calc(75vh - 80px)" }}>
+              <div className="overflow-y-auto space-y-4" style={{ maxHeight: "calc(85vh - 80px)" }}>
+                {/* 사진 캐러셀 */}
+                {(detailProperty.photoUrls ?? []).length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto">
+                    {(detailProperty.photoUrls ?? []).map((url, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={i} src={url} alt=""
+                        className="h-40 w-56 shrink-0 rounded-xl object-cover" />
+                    ))}
+                  </div>
+                )}
+
                 {/* Price header */}
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">
-                    {priceLabel(detailProperty)}
+                    {priceLabel(detailProperty.property)}
                   </h2>
-                  {detailProperty.trade_type !== "전세" && (
-                    <p className="text-sm text-gray-500">보증금 {detailProperty.deposit.toLocaleString()}만</p>
+                  {detailProperty.property.trade_type !== "전세" && (
+                    <p className="text-sm text-gray-500">보증금 {detailProperty.property.deposit.toLocaleString()}만</p>
                   )}
                   <p className="mt-0.5 flex items-center gap-1 text-sm text-gray-500">
                     <MapPin className="size-3.5 shrink-0" />
-                    {detailProperty.address}
+                    {detailProperty.property.address}
                   </p>
+                  {detailProperty.agentUsername && (
+                    <p className="mt-0.5 text-xs text-blue-600">
+                      공인중개사: {detailProperty.agentUsername}
+                    </p>
+                  )}
                 </div>
 
                 {/* Info grid */}
                 <div className="grid grid-cols-3 gap-3">
-                  <InfoCell icon={<Home className="size-4" />} label="실평수" value={pyeong(detailProperty.exclusive_area)} />
-                  <InfoCell icon={<Home className="size-4" />} label="방" value={`${detailProperty.rooms}개`} />
-                  <InfoCell icon={<Home className="size-4" />} label="방향" value={detailProperty.direction || "-"} />
+                  <InfoCell icon={<Home className="size-4" />} label="실평수" value={pyeong(detailProperty.property.exclusive_area)} />
+                  <InfoCell icon={<Home className="size-4" />} label="방" value={`${detailProperty.property.rooms}개`} />
+                  <InfoCell icon={<Home className="size-4" />} label="방향" value={detailProperty.property.direction || "-"} />
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <InfoCell icon={<Clock className="size-4" />} label="관리비" value={`${(detailProperty.maintenance_fee / 10000).toFixed(1)}만`} />
-                  <InfoCell icon={<Home className="size-4" />} label="년식" value={buildYearLabel(detailProperty)} />
-                  <InfoCell icon={<Home className="size-4" />} label="유형" value={detailProperty.property_type} />
+                  <InfoCell icon={<Clock className="size-4" />} label="관리비" value={`${(detailProperty.property.maintenance_fee / 10000).toFixed(1)}만`} />
+                  <InfoCell icon={<Home className="size-4" />} label="년식" value={buildYearLabel(detailProperty.property)} />
+                  <InfoCell icon={<Home className="size-4" />} label="유형" value={detailProperty.property.property_type} />
                 </div>
 
                 {/* Walk / Bus info */}
-                {(detailProperty.walk_to_gate_min != null || detailProperty.bus_to_gate_min != null) && (
+                {(detailProperty.property.walk_to_gate_min != null || detailProperty.property.bus_to_gate_min != null) && (
                   <div className="rounded-xl bg-gray-50 p-3">
                     <p className="mb-2 text-xs font-semibold text-gray-500">이동 정보</p>
                     <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                      {detailProperty.walk_to_gate_min != null && detailProperty.walk_to_gate_min > 0 && (
+                      {detailProperty.property.walk_to_gate_min != null && detailProperty.property.walk_to_gate_min > 0 && (
                         <span className="flex items-center gap-1.5">
                           <Clock className="size-4 text-green-600" />
-                          도보 {Math.round(detailProperty.walk_to_gate_min)}분
-                          {detailProperty.walk_to_gate_m != null && (
-                            <span className="text-xs text-gray-400">({(detailProperty.walk_to_gate_m / 1000).toFixed(1)}km)</span>
+                          도보 {Math.round(detailProperty.property.walk_to_gate_min)}분
+                          {detailProperty.property.walk_to_gate_m != null && (
+                            <span className="text-xs text-gray-400">({(detailProperty.property.walk_to_gate_m / 1000).toFixed(1)}km)</span>
                           )}
                         </span>
                       )}
-                      {detailProperty.bus_to_gate_min != null && detailProperty.bus_to_gate_min > 0 && (
+                      {detailProperty.property.bus_to_gate_min != null && detailProperty.property.bus_to_gate_min > 0 && (
                         <span className="flex items-center gap-1.5">
                           <Bus className="size-4 text-emerald-600" />
-                          버스 {Math.round(detailProperty.bus_to_gate_min)}분
+                          버스 {Math.round(detailProperty.property.bus_to_gate_min)}분
                         </span>
                       )}
                     </div>
@@ -759,9 +863,9 @@ function ResultsContent() {
                 )}
 
                 {/* Option tags */}
-                {optionTags(detailProperty).length > 0 && (
+                {optionTags(detailProperty.property).length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {optionTags(detailProperty).map((tag) => (
+                    {optionTags(detailProperty.property).map((tag) => (
                       <span
                         key={tag}
                         className="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
@@ -773,16 +877,59 @@ function ResultsContent() {
                   </div>
                 )}
 
-                {/* Naver link */}
-                <a
-                  href={`https://new.land.naver.com/rooms?articleNo=${detailProperty.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-sm font-medium text-blue-600"
-                >
-                  네이버 부동산에서 보기
-                  <ExternalLink className="size-3.5" />
-                </a>
+                {/* ── Q1: 마음에 드는지 ── */}
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="mb-3 text-sm font-semibold text-blue-900">이 매물이 마음에 드십니까?</p>
+                  {q1Answer === null ? (
+                    <div className="flex gap-2">
+                      <button onClick={() => recordQ1(false)}
+                        className="flex-1 rounded-xl border border-gray-200 bg-white py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                        아니오
+                      </button>
+                      <button onClick={() => recordQ1(true)}
+                        className="flex-1 rounded-xl bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                        예
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-blue-700">
+                      {q1Answer ? "👍 마음에 드셨군요!" : "👋 다음 매물을 확인해보세요."}
+                    </p>
+                  )}
+                </div>
+
+                {/* ── Q2: 전화번호 필요 (Q1=예 일 때만) ── */}
+                {q1Answer === true && q2Answer === null && (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                    <p className="mb-3 text-sm font-semibold text-emerald-900">공인중개사 전화번호가 필요하십니까?</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => recordQ2(false)}
+                        className="flex-1 rounded-xl border border-gray-200 bg-white py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                        아니오
+                      </button>
+                      <button onClick={() => recordQ2(true)}
+                        className="flex-1 rounded-xl bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                        예, 알려주세요
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 전화번호 표시 */}
+                {showPhone && detailProperty.agentPhone && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="text-xs font-semibold text-emerald-700 mb-1">공인중개사 연락처</p>
+                    <p className="text-lg font-bold text-emerald-900">{detailProperty.agentPhone}</p>
+                    {detailProperty.agentOfficeAddress && (
+                      <p className="mt-1 text-xs text-emerald-600">{detailProperty.agentOfficeAddress}</p>
+                    )}
+                    <a href={`tel:${detailProperty.agentPhone}`}
+                      className="mt-2 flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                      지금 전화하기
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  </div>
+                )}
               </div>
             </motion.div>
           </motion.div>
