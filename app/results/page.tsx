@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, Sparkles, Loader2, RefreshCw, ClipboardList } from "lucide-react";
+import { ArrowLeft, RotateCcw, X, ExternalLink, MapPin, Home, Clock, Bus, Shield, Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KakaoMap, { type KakaoMapMarker } from "@/components/KakaoMap";
 import PropertyListCard from "@/components/PropertyListCard";
@@ -706,21 +706,6 @@ function ResultsContent() {
             })()}
           </div>
         </motion.div>
-
-        {/* 설문 참여 CTA — 결과 목록 위 */}
-        <div className="mb-2 flex flex-col items-center">
-          <div className="w-full max-w-sm rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-4">
-            <p className="text-sm font-semibold text-blue-900">추천 경험이 어떠셨나요?</p>
-            <p className="mt-0.5 text-xs text-blue-600">5~7분 설문으로 연구에 참여해 주세요.</p>
-            <Button
-              className="mt-3 w-full gap-2 bg-blue-600 hover:bg-blue-700"
-              onClick={() => router.push(`/survey?session=${sessionId}`)}
-            >
-              <ClipboardList className="size-4" />
-              설문 참여하기
-            </Button>
-          </div>
-        </div>
 
         {/* Property list */}
         {ranked.length === 0 ? (
