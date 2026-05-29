@@ -51,12 +51,6 @@ export default function HomePage() {
           className="flex flex-col items-center gap-2"
         >
           <p className="text-xs text-muted-foreground">약 2분 소요 · 10회 비교</p>
-          <button
-            onClick={() => router.push("/hub")}
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          >
-            전체 메뉴 (중개사 등록 · 관리)
-          </button>
         </motion.div>
       </div>
     </main>
