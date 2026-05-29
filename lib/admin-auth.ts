@@ -5,8 +5,12 @@
 import { createClient } from "@supabase/supabase-js";
 
 export function isAdminAuthed(request: Request): boolean {
-  // 매 요청마다 env를 읽어야 빌드 타임 고착 문제가 없음
-  const expected = (process.env.ADMIN_SECRET ?? "pnu-admin-2026").trim();
+  // ADMIN_PW 우선, 없으면 ADMIN_SECRET, 없으면 기본값
+  const expected = (
+    process.env.ADMIN_PW ??
+    process.env.ADMIN_SECRET ??
+    "pnu-admin-2026"
+  ).trim();
   const secret = (request.headers.get("x-admin-secret") ?? "").trim();
   return secret === expected;
 }
