@@ -64,6 +64,24 @@ function betterHigher(a: number, b: number): "a" | "b" | null {
   if (b > a) return "b";
   return null;
 }
+function boolLabel(v: boolean | null | undefined): string {
+  return v ? "있음" : "없음";
+}
+/** boolean 비교: 있음(true)이 좋음 */
+function betterBool(a: boolean | null | undefined, b: boolean | null | undefined): "a" | "b" | null {
+  const av = a ? 1 : 0;
+  const bv = b ? 1 : 0;
+  return betterHigher(av, bv);
+}
+
+/** 상세 비교 카테고리 정의 (거리/가격/안전/편의성) */
+const CMP_CATEGORIES = [
+  { key: "distance", label: "거리", icon: "🚶" },
+  { key: "price", label: "가격", icon: "💰" },
+  { key: "safety", label: "안전", icon: "🛡️" },
+  { key: "convenience", label: "편의성", icon: "✨" },
+] as const;
+type CmpCategory = (typeof CMP_CATEGORIES)[number]["key"];
 
 // ──────────────────────────────────────────────────────────
 // Macro 단계 UI (가상 아이템 비교)
@@ -235,6 +253,8 @@ function MicroCompareView({
   amenityTypes?: string;
 }) {
   const [showModal, setShowModal] = useState(false);
+  /** 상세 비교 모달에서 현재 선택된 카테고리 */
+  const [cmpCat, setCmpCat] = useState<CmpCategory>("price");
   /**
    * 현재 지도에 표시할 경로:
    *   null  = 경로 없음
@@ -545,56 +565,122 @@ function MicroCompareView({
                 </button>
               </div>
 
-              <div className="overflow-y-auto px-5 pb-4" style={{ maxHeight: "calc(75vh - 120px)" }}>
+              {/* 카테고리 탭 */}
+              <div className="flex gap-1 px-5 pb-2">
+                {CMP_CATEGORIES.map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => setCmpCat(c.key)}
+                    className={`flex flex-1 items-center justify-center gap-1 rounded-lg py-2 text-xs font-semibold transition ${
+                      cmpCat === c.key ? "bg-blue-500 text-white shadow" : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    <span>{c.icon}</span>{c.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="overflow-y-auto px-5 pb-4" style={{ maxHeight: "calc(75vh - 170px)" }}>
                 <div className="mb-2 grid grid-cols-[1fr_1fr_1fr] gap-2 border-b pb-2">
                   <span className="text-xs text-gray-400">항목</span>
                   <span className="text-center text-xs font-bold text-red-500">A</span>
                   <span className="text-center text-xs font-bold text-blue-500">B</span>
                 </div>
-                <CmpRow label="거래유형" a={pA.trade_type} b={pB.trade_type} />
-                <CmpRow label="가격" a={priceLabel(pA)} b={priceLabel(pB)} better={betterLower(pA.monthly_rent || pA.deposit, pB.monthly_rent || pB.deposit)} />
-                <CmpRow label="보증금" a={`${pA.deposit.toLocaleString()}만`} b={`${pB.deposit.toLocaleString()}만`} better={betterLower(pA.deposit, pB.deposit)} />
-                <CmpRow label="관리비" a={`${(pA.maintenance_fee / 10000).toFixed(1)}만`} b={`${(pB.maintenance_fee / 10000).toFixed(1)}만`} better={betterLower(pA.maintenance_fee, pB.maintenance_fee)} />
-                <CmpRow label="실평수" a={pyeong(pA.exclusive_area)} b={pyeong(pB.exclusive_area)} better={betterHigher(pA.exclusive_area, pB.exclusive_area)} />
-                <CmpRow label="방" a={`${pA.rooms}개`} b={`${pB.rooms}개`} better={betterHigher(pA.rooms, pB.rooms)} />
-                <CmpRow label="방향" a={pA.direction || "-"} b={pB.direction || "-"} />
-                <CmpRow label="년식" a={buildYearLabel(pA)} b={buildYearLabel(pB)} />
-                <CmpRow label="주차" a={pA.parking ? "가능" : "불가"} b={pB.parking ? "가능" : "불가"} />
-                <CmpRow label="엘리베이터" a={pA.has_elevator ? "있음" : "없음"} b={pB.has_elevator ? "있음" : "없음"} />
-                <CmpRow label="CCTV" a={pA.has_cctv ? "있음" : "없음"} b={pB.has_cctv ? "있음" : "없음"} />
-                <CmpRow label="방범창" a={pA.has_entrance_security ? "있음" : "없음"} b={pB.has_entrance_security ? "있음" : "없음"} />
-                <CmpRow label="인터폰" a={pA.has_intercom ? "있음" : "없음"} b={pB.has_intercom ? "있음" : "없음"} />
-                {(pA.noise_level != null || pB.noise_level != null) && (
-                  <CmpRow
-                    label="소음"
-                    a={pA.noise_level != null ? `${pA.noise_level}dB` : "-"}
-                    b={pB.noise_level != null ? `${pB.noise_level}dB` : "-"}
-                    better={pA.noise_level != null && pB.noise_level != null ? betterLower(pA.noise_level, pB.noise_level) : null}
-                  />
-                )}
-                {(transitA || transitB) && (
+
+                {/* ── 거리 ── */}
+                {cmpCat === "distance" && (
                   <>
                     <CmpRow
-                      label="도보"
-                      a={transitA && transitA.walkMin > 0 ? `${transitA.walkMin}분` : "-"}
-                      b={transitB && transitB.walkMin > 0 ? `${transitB.walkMin}분` : "-"}
-                      better={transitA && transitB && transitA.walkMin > 0 && transitB.walkMin > 0 ? betterLower(transitA.walkMin, transitB.walkMin) : null}
+                      label="통학 도보"
+                      a={transitA && transitA.walkMin > 0 ? `${transitA.walkMin}분` : (pA.walk_to_gate_min != null ? `${pA.walk_to_gate_min}분` : "-")}
+                      b={transitB && transitB.walkMin > 0 ? `${transitB.walkMin}분` : (pB.walk_to_gate_min != null ? `${pB.walk_to_gate_min}분` : "-")}
+                      better={betterLower(transitA?.walkMin || pA.walk_to_gate_min || 999, transitB?.walkMin || pB.walk_to_gate_min || 999)}
                     />
                     <CmpRow
-                      label="버스"
-                      a={transitA?.busMin ? `${transitA.busMin}분` : "-"}
-                      b={transitB?.busMin ? `${transitB.busMin}분` : "-"}
-                      better={transitA?.busMin && transitB?.busMin ? betterLower(transitA.busMin, transitB.busMin) : null}
+                      label="통학 버스"
+                      a={transitA?.busMin ? `${transitA.busMin}분` : (pA.bus_to_gate_min ? `${pA.bus_to_gate_min}분` : "-")}
+                      b={transitB?.busMin ? `${transitB.busMin}분` : (pB.bus_to_gate_min ? `${pB.bus_to_gate_min}분` : "-")}
+                      better={betterLower(transitA?.busMin || pA.bus_to_gate_min || 999, transitB?.busMin || pB.bus_to_gate_min || 999)}
                     />
+                    <CmpRow
+                      label="도보 거리"
+                      a={pA.walk_to_gate_m != null ? `${pA.walk_to_gate_m}m` : "-"}
+                      b={pB.walk_to_gate_m != null ? `${pB.walk_to_gate_m}m` : "-"}
+                      better={pA.walk_to_gate_m != null && pB.walk_to_gate_m != null ? betterLower(pA.walk_to_gate_m, pB.walk_to_gate_m) : null}
+                    />
+                    {(pA.walk_slope_avg != null || pB.walk_slope_avg != null) && (
+                      <CmpRow
+                        label="경사도"
+                        a={pA.walk_slope_avg != null ? `${pA.walk_slope_avg.toFixed(1)}%` : "-"}
+                        b={pB.walk_slope_avg != null ? `${pB.walk_slope_avg.toFixed(1)}%` : "-"}
+                        better={pA.walk_slope_avg != null && pB.walk_slope_avg != null ? betterLower(pA.walk_slope_avg, pB.walk_slope_avg) : null}
+                      />
+                    )}
                   </>
                 )}
-                {(densityA != null || densityB != null) && (
-                  <CmpRow
-                    label="가로등"
-                    a={densityA != null ? `${densityA.toFixed(1)}개/100m` : "-"}
-                    b={densityB != null ? `${densityB.toFixed(1)}개/100m` : "-"}
-                    better={densityA != null && densityB != null ? betterHigher(densityA, densityB) : null}
-                  />
+
+                {/* ── 가격 ── */}
+                {cmpCat === "price" && (
+                  <>
+                    <CmpRow label="거래유형" a={pA.trade_type} b={pB.trade_type} />
+                    <CmpRow label={pA.trade_type === "전세" ? "전세금" : "월세"} a={priceLabel(pA)} b={priceLabel(pB)} better={betterLower(pA.monthly_rent || pA.deposit, pB.monthly_rent || pB.deposit)} />
+                    <CmpRow label="보증금" a={`${pA.deposit.toLocaleString()}만`} b={`${pB.deposit.toLocaleString()}만`} better={betterLower(pA.deposit, pB.deposit)} />
+                    <CmpRow label="관리비" a={`${(pA.maintenance_fee / 10000).toFixed(1)}만`} b={`${(pB.maintenance_fee / 10000).toFixed(1)}만`} better={betterLower(pA.maintenance_fee, pB.maintenance_fee)} />
+                  </>
+                )}
+
+                {/* ── 안전 ── */}
+                {cmpCat === "safety" && (
+                  <>
+                    <CmpRow label="CCTV" a={boolLabel(pA.has_cctv)} b={boolLabel(pB.has_cctv)} better={betterBool(pA.has_cctv, pB.has_cctv)} />
+                    <CmpRow label="방범창" a={boolLabel(pA.has_entrance_security)} b={boolLabel(pB.has_entrance_security)} better={betterBool(pA.has_entrance_security, pB.has_entrance_security)} />
+                    <CmpRow label="인터폰" a={boolLabel(pA.has_intercom)} b={boolLabel(pB.has_intercom)} better={betterBool(pA.has_intercom, pB.has_intercom)} />
+                    <CmpRow label="경비원" a={boolLabel(pA.has_security_guard)} b={boolLabel(pB.has_security_guard)} better={betterBool(pA.has_security_guard, pB.has_security_guard)} />
+                    <CmpRow label="카드키" a={boolLabel(pA.has_card_key)} b={boolLabel(pB.has_card_key)} better={betterBool(pA.has_card_key, pB.has_card_key)} />
+                    {(pA.noise_level != null || pB.noise_level != null) && (
+                      <CmpRow
+                        label="소음"
+                        a={pA.noise_level != null ? `${pA.noise_level}dB` : "-"}
+                        b={pB.noise_level != null ? `${pB.noise_level}dB` : "-"}
+                        better={pA.noise_level != null && pB.noise_level != null ? betterLower(pA.noise_level, pB.noise_level) : null}
+                      />
+                    )}
+                    {(pA.bug_risk != null || pB.bug_risk != null) && (
+                      <CmpRow label="벌레 위험" a={pA.bug_risk ?? "-"} b={pB.bug_risk ?? "-"} />
+                    )}
+                    {(densityA != null || densityB != null) && (
+                      <CmpRow
+                        label="가로등"
+                        a={densityA != null ? `${densityA.toFixed(1)}개/100m` : "-"}
+                        b={densityB != null ? `${densityB.toFixed(1)}개/100m` : "-"}
+                        better={densityA != null && densityB != null ? betterHigher(densityA, densityB) : null}
+                      />
+                    )}
+                  </>
+                )}
+
+                {/* ── 편의성 ── */}
+                {cmpCat === "convenience" && (
+                  <>
+                    <CmpRow label="실평수" a={pyeong(pA.exclusive_area)} b={pyeong(pB.exclusive_area)} better={betterHigher(pA.exclusive_area, pB.exclusive_area)} />
+                    {(pA.supply_area > 0 || pB.supply_area > 0) && (
+                      <CmpRow label="공급면적" a={pA.supply_area > 0 ? `${(pA.supply_area / 3.3058).toFixed(1)}평` : "-"} b={pB.supply_area > 0 ? `${(pB.supply_area / 3.3058).toFixed(1)}평` : "-"} better={betterHigher(pA.supply_area, pB.supply_area)} />
+                    )}
+                    <CmpRow label="방 개수" a={`${pA.rooms}개`} b={`${pB.rooms}개`} better={betterHigher(pA.rooms, pB.rooms)} />
+                    <CmpRow label="방향" a={pA.direction || "-"} b={pB.direction || "-"} />
+                    <CmpRow label="년식" a={buildYearLabel(pA)} b={buildYearLabel(pB)} />
+                    <CmpRow label="주차" a={pA.parking ? "가능" : "불가"} b={pB.parking ? "가능" : "불가"} better={betterBool(!!pA.parking, !!pB.parking)} />
+                    <CmpRow label="엘리베이터" a={boolLabel(pA.has_elevator)} b={boolLabel(pB.has_elevator)} better={betterBool(pA.has_elevator, pB.has_elevator)} />
+                    <CmpRow label="옷장" a={boolLabel(pA.has_closet)} b={boolLabel(pB.has_closet)} better={betterBool(pA.has_closet, pB.has_closet)} />
+                    <CmpRow label="붙박이장" a={boolLabel(pA.has_builtin_closet)} b={boolLabel(pB.has_builtin_closet)} better={betterBool(pA.has_builtin_closet, pB.has_builtin_closet)} />
+                    {(pA.floor_number != null || pB.floor_number != null) && (
+                      <CmpRow
+                        label="층수"
+                        a={pA.floor_number != null ? `${pA.floor_number}층${pA.total_floors ? `/${pA.total_floors}` : ""}` : "-"}
+                        b={pB.floor_number != null ? `${pB.floor_number}층${pB.total_floors ? `/${pB.total_floors}` : ""}` : "-"}
+                      />
+                    )}
+                  </>
                 )}
               </div>
 

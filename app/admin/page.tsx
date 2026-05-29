@@ -89,15 +89,26 @@ export default function AdminPage() {
 
   async function verify(sec: string) {
     setAuthError(null);
-    const res = await api("/api/admin/stats", {}, sec);
+    const trimmed = sec.trim();
+    let res: Response;
+    try {
+      res = await api("/api/admin/stats", {}, trimmed);
+    } catch {
+      setAuthError("서버에 연결할 수 없습니다. 잠시 후 다시 시도하세요");
+      setAuthed(false);
+      return;
+    }
     if (res.ok) {
       setAuthed(true);
-      window.sessionStorage.setItem(SECRET_KEY, sec);
+      window.sessionStorage.setItem(SECRET_KEY, trimmed);
       const data = await res.json();
       setStats(data);
-      void loadAll(sec);
-    } else {
+      void loadAll(trimmed);
+    } else if (res.status === 401) {
       setAuthError("관리자 비밀번호가 올바르지 않습니다");
+      setAuthed(false);
+    } else {
+      setAuthError(`서버 오류 (${res.status}). 환경변수/DB 설정을 확인하세요`);
       setAuthed(false);
     }
   }

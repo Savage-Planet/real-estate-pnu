@@ -4,10 +4,10 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
-export const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "pnu-admin-2026";
+export const ADMIN_SECRET = (process.env.ADMIN_SECRET ?? "pnu-admin-2026").trim();
 
 export function isAdminAuthed(request: Request): boolean {
-  const secret = request.headers.get("x-admin-secret") ?? "";
+  const secret = (request.headers.get("x-admin-secret") ?? "").trim();
   return secret === ADMIN_SECRET;
 }
 
