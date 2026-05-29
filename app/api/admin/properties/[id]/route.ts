@@ -1,6 +1,6 @@
 /** PATCH /api/admin/properties/[id] — 매물 승인/거부 (approved 토글) */
 import { NextResponse } from "next/server";
-import { isAdminAuthed, supabaseAdmin } from "@/lib/admin-auth";
+import { isAdminAuthed, getSupabaseAdmin } from "@/lib/admin-auth";
 
 export async function PATCH(
   request: Request,
@@ -9,6 +9,7 @@ export async function PATCH(
   if (!isAdminAuthed(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  const supabaseAdmin = getSupabaseAdmin();
   const { id } = await params;
   const { approved } = (await request.json()) as { approved: boolean };
 

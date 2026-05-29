@@ -1,8 +1,9 @@
 /** GET /api/admin/stats — 전체 통계 (매물/세션/응답) */
 import { NextResponse } from "next/server";
-import { isAdminAuthed, supabaseAdmin } from "@/lib/admin-auth";
+import { isAdminAuthed, getSupabaseAdmin } from "@/lib/admin-auth";
 
 async function count(table: string, col?: string, val?: unknown): Promise<number> {
+  const supabaseAdmin = getSupabaseAdmin();
   let q = supabaseAdmin.from(table).select("*", { count: "exact", head: true });
   if (col !== undefined) q = q.eq(col, val as never);
   const { count: c } = await q;

@@ -1,12 +1,12 @@
 /** GET /api/admin/properties — 전체 매물 + 중개사 정보 + 조회/응답 통계 */
 import { NextResponse } from "next/server";
-import { isAdminAuthed, supabaseAdmin } from "@/lib/admin-auth";
+import { isAdminAuthed, getSupabaseAdmin } from "@/lib/admin-auth";
 
 export async function GET(request: Request) {
   if (!isAdminAuthed(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-
+  const supabaseAdmin = getSupabaseAdmin();
   const { data: props, error } = await supabaseAdmin
     .from("agent_properties")
     .select("*, agent_profiles(username, phone, office_address)")

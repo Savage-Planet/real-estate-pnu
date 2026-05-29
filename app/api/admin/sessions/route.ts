@@ -1,12 +1,12 @@
 /** GET /api/admin/sessions — 사용자 세션 로그 + 세션별 매물 조회/응답 */
 import { NextResponse } from "next/server";
-import { isAdminAuthed, supabaseAdmin } from "@/lib/admin-auth";
+import { isAdminAuthed, getSupabaseAdmin } from "@/lib/admin-auth";
 
 export async function GET(request: Request) {
   if (!isAdminAuthed(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-
+  const supabaseAdmin = getSupabaseAdmin();
   const { data: sessions, error } = await supabaseAdmin
     .from("user_sessions")
     .select("*")
