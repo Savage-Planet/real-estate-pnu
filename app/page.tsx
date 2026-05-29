@@ -44,14 +44,20 @@ export default function HomePage() {
           </Button>
         </motion.div>
 
-        <motion.p
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.6 }}
-          className="text-xs text-muted-foreground"
+          className="flex flex-col items-center gap-2"
         >
-          약 2분 소요 · 10회 비교
-        </motion.p>
+          <p className="text-xs text-muted-foreground">약 2분 소요 · 10회 비교</p>
+          <button
+            onClick={() => router.push("/hub")}
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            전체 메뉴 (중개사 등록 · 관리)
+          </button>
+        </motion.div>
       </div>
     </main>
   );

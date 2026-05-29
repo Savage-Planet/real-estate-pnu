@@ -20,7 +20,7 @@ function FilterContent() {
   const searchParams = useSearchParams();
   const building = searchParams.get("building") ?? "";
 
-  const [rentRange, setRentRange] = useState<[number, number]>([30, 50]);
+  const [rentRange, setRentRange] = useState<[number, number]>([10, 50]);
   const [depositRange, setDepositRange] = useState<[number, number]>([MIN_DEPOSIT, MAX_DEPOSIT]);
   const [selectedAmenities, setSelectedAmenities] = useState<Set<string>>(new Set());
   const [count, setCount] = useState<number | null>(null);

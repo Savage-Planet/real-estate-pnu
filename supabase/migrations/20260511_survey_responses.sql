@@ -37,9 +37,11 @@ CREATE TABLE IF NOT EXISTS survey_responses (
 ALTER TABLE survey_responses ENABLE ROW LEVEL SECURITY;
 
 -- anon 사용자: 삽입 허용
+DROP POLICY IF EXISTS "anon_insert_survey" ON survey_responses;
 CREATE POLICY "anon_insert_survey" ON survey_responses
   FOR INSERT TO anon WITH CHECK (true);
 
 -- anon 사용자: 전체 조회 허용 (집계 분석 목적)
+DROP POLICY IF EXISTS "anon_select_survey" ON survey_responses;
 CREATE POLICY "anon_select_survey" ON survey_responses
   FOR SELECT TO anon USING (true);

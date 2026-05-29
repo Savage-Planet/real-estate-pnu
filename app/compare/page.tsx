@@ -35,6 +35,7 @@ import {
 } from "@/lib/hierarchical/v2/interactive-navigator";
 import { CATEGORY_NAMES } from "@/lib/hierarchical/v2/feature-groups";
 import { agentRowToProperty, type AgentPropertyRow } from "@/lib/agent-property-adapter";
+import { logSessionStart, logSessionProgress, logSessionComplete } from "@/lib/session-log";
 
 const BUSAN_UNIV = { lat: 35.2340, lng: 129.0800 };
 const ENRICH_TRANSIT_TIMEOUT_MS = 60_000;
@@ -703,11 +704,12 @@ function CompareContent() {
           return;
         }
 
-        // agent_properties (is_active=true) 도 학습에 포함
+        // agent_properties (활성 + 관리자 승인) 도 학습에 포함
         const { data: agentProps } = await supabase
           .from("agent_properties")
           .select("*")
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .eq("approved", true);
 
         const agentConverted = (agentProps ?? []).map((row) =>
           agentRowToProperty(row as AgentPropertyRow),
@@ -744,6 +746,9 @@ function CompareContent() {
         navRef.current = nav;
         const s = nav.current();
         setStep(s);
+
+        // 세션 로그 시작 기록 (best-effort)
+        void logSessionStart(sessionId, buildingId);
 
         logCompare("v2 navigator init", `매물 ${typed.length}개`);
       } catch (e) {
@@ -876,6 +881,9 @@ function CompareContent() {
     }
   }, [step, building, enrichMicroPair]);
 
+  // 누적 비교 횟수 (이탈 지점 추정용)
+  const totalRoundsRef = useRef(0);
+
   // ── 답변 처리 ──
   const handleAnswer = useCallback((winner: "a" | "b") => {
     const nav = navRef.current;
@@ -884,6 +892,16 @@ function CompareContent() {
     nav.answer(winner);
     const next = nav.current();
     setStep(next);
+
+    // 세션 진행 로그 (best-effort)
+    totalRoundsRef.current += 1;
+    void logSessionProgress(sessionId, {
+      phase: nav.isExtraPhase ? "extra" : (next.type === "macro" ? "macro" : next.type === "micro" ? "micro" : "done"),
+      lastRound: totalRoundsRef.current,
+      macroRound: next.type === "macro" ? next.round : undefined,
+      microRound: next.type === "micro" ? next.round : undefined,
+      didExtra: nav.isExtraPhase,
+    });
 
     if (next.type === "done") {
       // 추가 비교 모달 표시 (이미 extra 라운드 중이면 바로 결과로)
@@ -894,17 +912,18 @@ function CompareContent() {
         navigateToResults(nav, next);
       }
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const navigateToResults = useCallback((nav: InteractiveNavigator, doneStep: NavigatorStep) => {
     if (doneStep.type !== "done") return;
+    void logSessionComplete(sessionId, doneStep.categoryLabel, nav.isExtraPhase);
     let url = resultsUrl(doneStep.topPropertyIds, doneStep.categoryLabel);
     const weights = nav.learnedWeightSummary;
     if (weights.length > 0) {
       url += `&v2weights=${encodeURIComponent(JSON.stringify(weights))}`;
     }
     router.push(url);
-  }, [router, resultsUrl]);
+  }, [router, resultsUrl, sessionId]);
 
   const handleExtraConfirm = useCallback((doExtra: boolean) => {
     setShowExtraModal(false);
@@ -999,10 +1018,10 @@ function CompareContent() {
     return (
       <main className="flex h-dvh flex-col items-center justify-center gap-6 px-6">
         <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-          <h2 className="mb-2 text-lg font-bold text-gray-900">더 정밀한 추천을 원하시나요?</h2>
+          <h2 className="mb-2 text-lg font-bold text-gray-900">더 정확한 비교를 위해 추가로 계속 하시겠습니까?</h2>
           <p className="mb-5 text-sm text-gray-500">
-            추가 비교(최대 10회)를 진행하면 AI가 선호도를 더 정확하게 파악합니다.
-            수렴이 감지되면 즉시 종료됩니다.
+            매물을 최대 10회 더 비교하면 추천이 더 정밀해집니다.
+            충분히 파악되면 10회 전이라도 자동으로 종료됩니다.
           </p>
           <div className="flex gap-3">
             <Button variant="outline" className="flex-1" onClick={() => handleExtraConfirm(false)}>

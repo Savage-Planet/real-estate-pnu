@@ -169,11 +169,12 @@ function ResultsContent() {
       const typed = props as Property[];
       const comps = comparisons as Comparison[];
 
-      // agent_properties (활성) 로드 — 결과 표시용 + stats 합산용
+      // agent_properties (활성 + 관리자 승인) 로드 — 결과 표시용 + stats 합산용
       const { data: agentRows } = await supabase
         .from("agent_properties")
         .select("*, agent_profiles(username, phone, office_address)")
-        .eq("is_active", true);
+        .eq("is_active", true)
+        .eq("approved", true);
 
       // agentRow → Property 변환 (agent_profiles join 처리)
       type AgentRowWithProfile = AgentPropertyRow & {
