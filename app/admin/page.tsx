@@ -108,7 +108,12 @@ export default function AdminPage() {
       setAuthError("관리자 비밀번호가 올바르지 않습니다");
       setAuthed(false);
     } else {
-      setAuthError(`서버 오류 (${res.status}). 환경변수/DB 설정을 확인하세요`);
+      let detail = "";
+      try {
+        const body = await res.json();
+        detail = body?.error ? ` — ${body.error}` : "";
+      } catch { /* ignore */ }
+      setAuthError(`서버 오류 (${res.status})${detail}`);
       setAuthed(false);
     }
   }
