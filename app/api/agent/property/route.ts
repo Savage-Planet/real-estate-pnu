@@ -5,10 +5,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
 
 function yearToWithin(years: number): {
   within_4y: boolean; within_10y: boolean; within_15y: boolean; within_25y: boolean;
@@ -25,7 +27,7 @@ export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.replace("Bearer ", "");
   if (!token) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
+  const supabaseAdmin = getSupabaseAdmin();
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
@@ -43,7 +45,7 @@ export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.replace("Bearer ", "");
   if (!token) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
+  const supabaseAdmin = getSupabaseAdmin();
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(token);
   if (authErr || !user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 

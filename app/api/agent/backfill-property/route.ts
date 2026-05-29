@@ -8,10 +8,12 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fetchOdsayTransitBackfill } from "@/lib/odsay";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
 
 const TMAP_KEY = process.env.NEXT_PUBLIC_TMAP_KEY ?? "";
 const ODSAY_PROXY_SECRET = process.env.ODSAY_PROXY_SECRET ?? "";
@@ -33,7 +35,7 @@ function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): num
 }
 
 async function fetchGates(): Promise<Gate[]> {
-  const { data } = await supabaseAdmin.from("gates").select("id,name,lat,lng");
+  const { data } = await getSupabaseAdmin().from("gates").select("id,name,lat,lng");
   return (data ?? []) as Gate[];
 }
 
@@ -152,6 +154,8 @@ export async function POST(request: Request) {
   if (!propertyId) {
     return NextResponse.json({ error: "propertyId required" }, { status: 400 });
   }
+
+  const supabaseAdmin = getSupabaseAdmin();
 
   // 매물 조회
   const { data: prop, error: propErr } = await supabaseAdmin

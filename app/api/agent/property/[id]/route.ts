@@ -5,15 +5,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
 
 async function getUser(request: Request) {
   const token = (request.headers.get("authorization") ?? "").replace("Bearer ", "");
   if (!token) return null;
-  const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+  const { data: { user } } = await getSupabaseAdmin().auth.getUser(token);
   return user;
 }
 
@@ -26,6 +28,7 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { is_active } = (await request.json()) as { is_active: boolean };
+  const supabaseAdmin = getSupabaseAdmin();
   const { error } = await supabaseAdmin
     .from("agent_properties")
     .update({ is_active })
@@ -43,7 +46,7 @@ export async function DELETE(
   const { id } = await params;
   const user = await getUser(request);
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
+  const supabaseAdmin = getSupabaseAdmin();
   const { error } = await supabaseAdmin
     .from("agent_properties")
     .delete()
