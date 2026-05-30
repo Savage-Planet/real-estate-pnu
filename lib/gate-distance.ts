@@ -35,9 +35,55 @@ async function fetchBuildingGateRoute(
     .eq("gate_id", gateId)
     .single();
 
-  const result = error || !data ? null : (data as BuildingGateRoute);
+  let result = error || !data ? null : (data as BuildingGateRoute);
+
+  // DB에 정문→건물 경로가 없으면 Tmap으로 즉석 계산하여 보완
+  if (!result) {
+    result = await backfillBuildingGateRoute(buildingId, gateId);
+  }
+
   bgrCache.set(key, result);
   return result;
+}
+
+/** building_gate_routes 가 비었을 때 Tmap(/api/walk-route)으로 보행 경로를 계산 */
+async function backfillBuildingGateRoute(
+  buildingId: string,
+  gateId: string,
+): Promise<BuildingGateRoute | null> {
+  try {
+    // 건물·정문 좌표 조회
+    const [{ data: b }, { data: g }] = await Promise.all([
+      supabase.from("buildings").select("lat,lng").eq("id", buildingId).single(),
+      supabase.from("gates").select("lat,lng").eq("id", gateId).single(),
+    ]);
+    const building = b as { lat: number; lng: number } | null;
+    const gate = g as { lat: number; lng: number } | null;
+    if (!building || !gate) return null;
+
+    // 정문(출발) → 건물(도착) 보행 경로
+    const url = `/api/walk-route?sx=${gate.lng}&sy=${gate.lat}&ex=${building.lng}&ey=${building.lat}&building_id=${encodeURIComponent(buildingId)}&gate_id=${encodeURIComponent(gateId)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      ok: boolean;
+      walkMin?: number;
+      walkM?: number;
+      route?: Array<[number, number]>;
+    };
+    if (!data.ok || !data.route || data.route.length < 2) return null;
+
+    return {
+      id: -1,
+      building_id: buildingId,
+      gate_id: gateId,
+      walk_time_min: data.walkMin ?? 0,
+      walk_distance_m: data.walkM ?? 0,
+      walk_route: data.route,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
