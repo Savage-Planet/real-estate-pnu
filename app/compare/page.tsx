@@ -67,6 +67,18 @@ function betterHigher(a: number, b: number): "a" | "b" | null {
 function boolLabel(v: boolean | null | undefined): string {
   return v ? "있음" : "없음";
 }
+
+/** ODsay busReason 코드를 사용자 친화적 문구로 변환 */
+function busReasonLabel(reason?: string): string {
+  if (!reason) return "버스 경로를 불러오지 못했습니다";
+  // ODsay -98: 출발/도착지가 가까워 대중교통 검색 불가 (도보권)
+  if (reason.includes("-98") || /반경|가까|too_close|walk_too_short/.test(reason)) {
+    return "도보권 거리라 버스 경로가 없습니다";
+  }
+  if (reason.startsWith("no_path")) return "버스 경로가 없습니다";
+  if (reason.includes("no_odsay_key")) return "버스 경로 서비스 점검 중입니다";
+  return "버스 경로를 불러오지 못했습니다";
+}
 /** boolean 비교: 있음(true)이 좋음 */
 function betterBool(a: boolean | null | undefined, b: boolean | null | undefined): "a" | "b" | null {
   const av = a ? 1 : 0;
@@ -337,10 +349,6 @@ function MicroCompareView({
             transition={{ duration: 0.4 }}
           />
         </div>
-        {/* A/B 핵심 차이 한줄 */}
-        <div className="mt-1.5 rounded-lg bg-white/80 px-3 py-1 text-center text-[11px] font-medium text-gray-600 backdrop-blur-sm">
-          {diffLine}
-        </div>
         {/* 선택한 편의시설 칩 */}
         {amenityTypes && (() => {
           const selected = amenityTypes.split(",").filter(Boolean);
@@ -373,14 +381,14 @@ function MicroCompareView({
       />
 
 
-      {/* 버스 활성인데 ODsay 경로 데이터 없음 안내 — reason 표시 */}
+      {/* 버스 활성인데 ODsay 경로 데이터 없음 안내 */}
       {activeRoute?.type === "bus" && (() => {
         const t = activeRoute.side === "a" ? transitA : transitB;
         const noPath = !t?.busPath || t.busPath.length < 2;
         if (!noPath) return null;
         return (
           <div className="absolute left-1/2 top-[110px] z-20 -translate-x-1/2 rounded-xl bg-amber-50/95 px-3 py-1.5 text-center text-[11px] text-amber-700 shadow backdrop-blur-sm">
-            ODsay 경로 미수신 (시간 {t?.busMin ?? 0}분) · 사유: <code className="font-mono">{t?.busReason ?? "?"}</code>
+            {busReasonLabel(t?.busReason)}
           </div>
         );
       })()}
@@ -400,6 +408,10 @@ function MicroCompareView({
 
       {/* 하단 */}
       <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4">
+        {/* A/B 핵심 차이 한줄 */}
+        <div className="mb-1.5 rounded-lg bg-white/80 px-3 py-1 text-center text-[11px] font-medium text-gray-600 backdrop-blur-sm">
+          {diffLine}
+        </div>
         {/* 매물 비교 버튼 (단일) */}
         <div className="mb-2">
           <button
