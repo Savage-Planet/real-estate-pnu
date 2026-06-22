@@ -241,34 +241,34 @@ function ResultsContent() {
       }
       setRoundMetrics(metricsHistory);
 
-      // ── agent 매물 스코어링 (결과 표시는 agent 매물만) ──
-      // v2 topIds를 기준으로 agent 매물에 점수 부여
-      let scored: ScoredProperty[];
+      // ── 전체 매물 스코어링 (regular + agent 모두 결과 표시) ──
+      // agent 매물은 연락처·사진 정보를 유지하고, 나머지는 일반 매물로 함께 노출
+      const agentByPropId = new Map(agentConverted.map((a) => [a.property.id, a]));
+      const combined: Array<{
+        property: Property;
+        agentId?: string;
+        agentUsername?: string;
+        agentPhone?: string;
+        agentOfficeAddress?: string;
+        photoUrls?: string[];
+      }> = [
+        ...agentConverted,
+        ...typed
+          .filter((p) => !agentByPropId.has(p.id))
+          .map((p) => ({ property: p })),
+      ];
 
-      if (agentConverted.length > 0) {
-        // agent 매물 스코어링: 모델 점수로 랭킹
-        if (isV2 && topIdsParam) {
-          const topIds = topIdsParam.split(",").filter(Boolean);
-          const topIdSet = new Set(topIds);
-          // agent 매물 중 topIds에 포함된 것은 높은 순위, 나머지는 모델 점수
-          scored = agentConverted.map((a) => {
-            const rankIdx = topIds.indexOf(a.property.id);
-            const score = rankIdx >= 0
-              ? Math.pow(0.85, rankIdx)
-              : scoreProperty(model, toFeatureVector(a.property, stats, commuteById.get(a.property.id)));
-            return { ...a, score };
-          });
-        } else {
-          scored = agentConverted.map((a) => ({
-            ...a,
-            score: scoreProperty(model, toFeatureVector(a.property, stats, commuteById.get(a.property.id))),
-          }));
-        }
-        scored.sort((a, b) => b.score - a.score);
-      } else {
-        // agent 매물이 없으면 빈 목록 (or fallback to regular? 현재는 빈 목록)
-        scored = [];
-      }
+      const topIds = isV2 && topIdsParam
+        ? topIdsParam.split(",").filter(Boolean)
+        : [];
+      let scored: ScoredProperty[] = combined.map((a) => {
+        const rankIdx = topIds.indexOf(a.property.id);
+        const score = rankIdx >= 0
+          ? Math.pow(0.85, rankIdx)
+          : scoreProperty(model, toFeatureVector(a.property, stats, commuteById.get(a.property.id)));
+        return { ...a, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
 
       // 같은 위치(lat/lng 소수점 4자리) 중복 매물 제거: 순위가 높은 것만 유지
       const seenLocations = new Set<string>();
@@ -711,8 +711,8 @@ function ResultsContent() {
         {/* Property list */}
         {ranked.length === 0 ? (
           <div className="rounded-2xl border-2 border-dashed py-12 text-center text-gray-400">
-            <p className="text-sm font-medium">등록된 중개사 매물이 없습니다</p>
-            <p className="mt-1 text-xs">중개사가 매물을 등록하면 여기에 표시됩니다.</p>
+            <p className="text-sm font-medium">조건에 맞는 매물이 없습니다</p>
+            <p className="mt-1 text-xs">필터 조건을 조정한 뒤 다시 시도해 주세요.</p>
           </div>
         ) : (
           <motion.div
